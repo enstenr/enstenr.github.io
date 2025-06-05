@@ -1,14 +1,14 @@
 [
   {
-    "name": "Rajesh Kumar",
-    "role": "Flood Monitoring Specialist",
+    "name": "Student 1",
+    "role": "Big Data ",
     "location": "UK",
     "email": "rajesh@example.com"
   },
   {
-    "name": "Aisha Malik",
-    "role": "Remote Sensing Analyst",
+    "name": "Student 2 ",
+    "role": "AI",
     "location": "India",
-    "email": "aisha@example.com"
+    "email": "student2@example.com"
   }
 ]
