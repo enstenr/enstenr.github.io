@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Spring-Boot on Beyond the Bytes</title>
+    <link>http://localhost:1313/categories/spring-boot/</link>
+    <description>Recent content in Spring-Boot on Beyond the Bytes</description>
+    <generator>Hugo -- 0.157.0</generator>
+    <language>en-us</language>
+    <lastBuildDate>Sat, 07 Mar 2026 05:55:00 +0000</lastBuildDate>
+    <atom:link href="http://localhost:1313/categories/spring-boot/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Spring Boot - Do we still need to generate getters / setters ? </title>
+      <link>http://localhost:1313/posts/drafts/lombook-spring-boot/</link>
+      <pubDate>Sat, 07 Mar 2026 05:55:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/drafts/lombook-spring-boot/</guid>
+      <description>Why moving from Java/Spring to Go feels like trading a complex hierarchy for a modular Lego set.</description>
+    </item>
+  </channel>
+</rss>

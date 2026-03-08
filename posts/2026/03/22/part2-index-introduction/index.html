@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en" dir="auto" data-theme="auto">
+
+<head><script src="/livereload.js?mindelay=10&amp;v=2&amp;port=1313&amp;path=livereload" data-no-instant defer></script><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="index, follow">
+<title>Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) | Beyond the Bytes</title>
+<meta name="keywords" content="Databases, Performance, Computer Science">
+<meta name="description" content="6. The &ldquo;Handshake&rdquo;: Why OS and Database Page Sizes Differ
+When you run getconf PAGESIZE on Ubuntu, you see 4096 (4 KB). Yet, your database often uses 8 KB or 16 KB. If the RAM can process data quickly, why is there this mismatch?
+The Generalist (Ubuntu) vs. The Specialist (Database)
+
+Ubuntu (4 KB): An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the &ldquo;Goldilocks&rdquo; size for general computing.
+Database (8 KB&#43;): A database is a specialist. It knows its files are massive. By using a larger Logical Page, it increases Fan-out (the number of pointers per page). This keeps the B-Tree &ldquo;short and fat&rdquo; rather than &ldquo;tall and skinny,&rdquo; reducing the number of disk reads.
+
+How They Sync
+There is no &ldquo;clash&rdquo; because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches two 4 KB hardware blocks.">
+<meta name="author" content="Rajesh Subramanian">
+<link rel="canonical" href="http://localhost:1313/posts/2026/03/22/part2-index-introduction/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.45da07cc2f1287a2aed2f0e5d5f6a80a124756a1c1228703eebc30c546fb9f0e.css" integrity="sha256-RdoHzC8Sh6Ku0vDl1faoChJHVqHBIocD7rwwxUb7nw4=" rel="preload stylesheet" as="style">
+<link rel="icon" href="http://localhost:1313/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="http://localhost:1313/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="http://localhost:1313/favicon-32x32.png">
+<link rel="apple-touch-icon" href="http://localhost:1313/apple-touch-icon.png">
+<link rel="mask-icon" href="http://localhost:1313/safari-pinned-tab.svg">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<link rel="alternate" hreflang="en" href="http://localhost:1313/posts/2026/03/22/part2-index-introduction/">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --theme: rgb(29, 30, 32);
+                --entry: rgb(46, 46, 51);
+                --primary: rgb(218, 218, 219);
+                --secondary: rgb(155, 156, 157);
+                --tertiary: rgb(65, 66, 68);
+                --content: rgb(196, 196, 197);
+                --code-block-bg: rgb(46, 46, 51);
+                --code-bg: rgb(55, 56, 62);
+                --border: rgb(51, 51, 51);
+                color-scheme: dark;
+            }
+
+            .list {
+                background: var(--theme);
+            }
+
+            .toc {
+                background: var(--entry);
+            }
+        }
+
+        @media (prefers-color-scheme: light) {
+            .list::-webkit-scrollbar-thumb {
+                border-color: var(--code-bg);
+            }
+        }
+
+    </style>
+</noscript>
+<script>
+    if (localStorage.getItem("pref-theme") === "dark") {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else if (localStorage.getItem("pref-theme") === "light") {
+       document.querySelector("html").dataset.theme = 'light';
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else {
+        document.querySelector("html").dataset.theme = 'light';
+    }
+
+</script><meta property="og:url" content="http://localhost:1313/posts/2026/03/22/part2-index-introduction/">
+  <meta property="og:site_name" content="Beyond the Bytes">
+  <meta property="og:title" content="Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)">
+  <meta property="og:description" content="6. The “Handshake”: Why OS and Database Page Sizes Differ When you run getconf PAGESIZE on Ubuntu, you see 4096 (4 KB). Yet, your database often uses 8 KB or 16 KB. If the RAM can process data quickly, why is there this mismatch?
+The Generalist (Ubuntu) vs. The Specialist (Database) Ubuntu (4 KB): An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the “Goldilocks” size for general computing. Database (8 KB&#43;): A database is a specialist. It knows its files are massive. By using a larger Logical Page, it increases Fan-out (the number of pointers per page). This keeps the B-Tree “short and fat” rather than “tall and skinny,” reducing the number of disk reads. How They Sync There is no “clash” because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches two 4 KB hardware blocks.">
+  <meta property="og:locale" content="en-us">
+  <meta property="og:type" content="article">
+    <meta property="article:section" content="posts">
+    <meta property="article:published_time" content="2026-03-29T05:55:00+00:00">
+    <meta property="article:modified_time" content="2026-03-29T05:55:00+00:00">
+    <meta property="article:tag" content="Databases">
+    <meta property="article:tag" content="Performance">
+    <meta property="article:tag" content="Computer Science">
+      <meta property="og:see_also" content="http://localhost:1313/posts/drafts/part4-index-introduction/">
+      <meta property="og:see_also" content="http://localhost:1313/posts/2026/03/22/part1-index-introduction/">
+      <meta property="og:see_also" content="http://localhost:1313/posts/drafts/part3-index-introduction/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)">
+<meta name="twitter:description" content="6. The &ldquo;Handshake&rdquo;: Why OS and Database Page Sizes Differ
+When you run getconf PAGESIZE on Ubuntu, you see 4096 (4 KB). Yet, your database often uses 8 KB or 16 KB. If the RAM can process data quickly, why is there this mismatch?
+The Generalist (Ubuntu) vs. The Specialist (Database)
+
+Ubuntu (4 KB): An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the &ldquo;Goldilocks&rdquo; size for general computing.
+Database (8 KB&#43;): A database is a specialist. It knows its files are massive. By using a larger Logical Page, it increases Fan-out (the number of pointers per page). This keeps the B-Tree &ldquo;short and fat&rdquo; rather than &ldquo;tall and skinny,&rdquo; reducing the number of disk reads.
+
+How They Sync
+There is no &ldquo;clash&rdquo; because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches two 4 KB hardware blocks.">
+
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position":  1 ,
+      "name": "Posts",
+      "item": "http://localhost:1313/posts/"
+    }, 
+    {
+      "@type": "ListItem",
+      "position":  2 ,
+      "name": "Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)",
+      "item": "http://localhost:1313/posts/2026/03/22/part2-index-introduction/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)",
+  "name": "Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)",
+  "description": "6. The \u0026ldquo;Handshake\u0026rdquo;: Why OS and Database Page Sizes Differ When you run getconf PAGESIZE on Ubuntu, you see 4096 (4 KB). Yet, your database often uses 8 KB or 16 KB. If the RAM can process data quickly, why is there this mismatch?\nThe Generalist (Ubuntu) vs. The Specialist (Database) Ubuntu (4 KB): An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the \u0026ldquo;Goldilocks\u0026rdquo; size for general computing. Database (8 KB+): A database is a specialist. It knows its files are massive. By using a larger Logical Page, it increases Fan-out (the number of pointers per page). This keeps the B-Tree \u0026ldquo;short and fat\u0026rdquo; rather than \u0026ldquo;tall and skinny,\u0026rdquo; reducing the number of disk reads. How They Sync There is no \u0026ldquo;clash\u0026rdquo; because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches two 4 KB hardware blocks.\n",
+  "keywords": [
+    "Databases", "Performance", "Computer Science"
+  ],
+  "articleBody": "6. The “Handshake”: Why OS and Database Page Sizes Differ When you run getconf PAGESIZE on Ubuntu, you see 4096 (4 KB). Yet, your database often uses 8 KB or 16 KB. If the RAM can process data quickly, why is there this mismatch?\nThe Generalist (Ubuntu) vs. The Specialist (Database) Ubuntu (4 KB): An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the “Goldilocks” size for general computing. Database (8 KB+): A database is a specialist. It knows its files are massive. By using a larger Logical Page, it increases Fan-out (the number of pointers per page). This keeps the B-Tree “short and fat” rather than “tall and skinny,” reducing the number of disk reads. How They Sync There is no “clash” because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches two 4 KB hardware blocks.\nLayer Unit Size Role CPU Cache Cache Line 64 Bytes The ultra-fast “bite-sized” chunks the CPU actually chews on. Ubuntu (OS) Page 4 KB The standard unit for moving data from Disk to RAM. Database Page/Block 8 KB The logical unit for organizing the B-Tree index. 7. The Math of Pointer Density (6-byte vs. 8-byte) You might wonder: If a 64-bit system uses 8-byte addresses, why do databases try to use 6-byte pointers?\nIt comes down to Page Density. A smaller pointer allows more entries to fit into a single 8 KB page. Let’s look at the math for a table indexing a 4-byte Integer ID:\nScenario A: Standard 64-bit Pointer (8 bytes) Entry Size: 4B (ID) + 8B (Pointer) = 12 bytes Entries per Page: $8192 / 12 \\approx \\mathbf{682}$ Tree Capacity (3 Levels): $682^3 \\approx \\mathbf{317}$ Million rows Scenario B: Optimized Disk Pointer (6 bytes) Entry Size: 4B (ID) + 6B (Pointer) = 10 bytes Entries per Page: $8192 / 10 \\approx \\mathbf{819}$ Tree Capacity (3 Levels): $819^3 \\approx \\mathbf{550}$ Million rows The Deep Insight: By “shaving off” 2 bytes from the pointer, we increased the capacity of a 3-level tree by over 230 million rows without adding a single extra “jump” (Disk I/O). In the database world, smaller is faster.\n8. From Disk to RAM: The Buffer Pool The database doesn’t read your index byte-by-byte.\nOn Disk: The index is stored in 8 KB chunks. The Request: You search for ID 72. The Fetch: The DB finds the 8 KB page containing 72 and copies it exactly into a dedicated section of RAM called the Buffer Pool. The CPU Speed: Once that 8 KB page is in RAM, the CPU can scan those 819 entries in nanoseconds. 9. The Math of the 6-Byte Pointer: Why 256 Terabytes? You noticed a critical detail: $2^{48}$ is a massive number, but why does it equal 256 Terabytes and not Terabits?\nThe Calculation In computer architecture, addresses point to Bytes, not Bits.\n1 Byte = 8 Bits. 6 Bytes = 48 Bits. Total Addressable Units: $2^{48}$ bytes. Let’s break the math down: $$2^{10} = 1,024 \\text{ (1 Kilobyte)}$$ $$2^{20} = 1,048,576 \\text{ (1 Megabyte)}$$ $$2^{30} = 1,073,741,824 \\text{ (1 Gigabyte)}$$ $$2^{40} = 1,099,511,627,776 \\text{ (1 Terabyte)}$$\nSo, $2^{48}$ is actually $2^8 \\times 2^{40}$: $$256 \\times 1 \\text{ Terabyte} = \\mathbf{256 \\text{ Terabytes}}$$\nWhy Disk Pointers are 6 Bytes vs. RAM Pointers are 8 Bytes This is a classic “Software vs. Hardware” distinction.\nFeature RAM Pointer (Hardware) Disk Pointer (Database File) Size 8 Bytes (64-bit) 6 Bytes (48-bit) Reasoning Hardware Mandate: Your 64-bit CPU is “wired” to read 8-byte chunks. It is a physical requirement of the memory bus. Storage Optimization: Database engineers realized a single table rarely exceeds 256TB. Saving 2 bytes per pointer is a massive win. The “Translation” The CPU uses the address directly to talk to the RAM sticks. When the DB loads a page into RAM, it “pads” the 6-byte pointer with two extra zeros to make it 8 bytes so the CPU can read it. The Efficiency Gain By using 6 bytes on disk instead of 8, we aren’t just saving disk space; we are increasing Page Density. As we calculated earlier, this “shaving” of 2 bytes allows us to fit ~20% more entries into every 8 KB page.\nMore entries per page = A wider tree = Fewer disk seeks = Faster Queries.\n10. Summary: The Anatomy of a Search To wrap up the journey from the query to the hardware:\nThe Query: You ask for WHERE ID = 72. The Root/Internal Nodes: The DB navigates through 8 KB pages in RAM (or fetches them from disk). The Leaf Node: The DB finds the entry for 72. It reads the 6-byte disk pointer. The Padding: The DB software converts those 6 bytes into an 8-byte RAM address. The Fetch: The CPU uses that 8-byte address to grab the actual row data from the Buffer Pool or Disk. 11. The “Postman” Analogy: Why we address Bytes, not Bits One of the most common points of confusion in low-level systems is why a 48-bit pointer address equals 256 Terabytes and not Terabits. It all comes down to the Addressable Unit.\nThe Street vs. House Problem Imagine you are designing a postal system for a massive city:\nThe Bits (The Houses): There are billions of houses. If you give every single house a unique, 50-digit GPS coordinate, your “Address Book” (the Index) would eventually become larger than the city itself! The Byte (The Street): To be efficient, you group 8 houses together into one Street. Now, the postman only needs one address for the entire street. The Rule: In computer architecture, the smallest “Street” we address is 1 Byte (8 bits). Why not address every Bit? If we tried to give every single bit its own unique address:\nIndex Bloat: The index would take up 8x more space. Hardware Complexity: The CPU and RAM would have to be 8x more complex to manage those tiny, individual destinations. Instead, the CPU asks for the address of a Byte, pulls all 8 bits into its “hands” (the registers), changes the bit it needs, and puts the whole Byte back.\nThe Final Math Because every “Street” (Byte) has one unique pointer address:\nAddress size: 6 Bytes (48 bits). Number of “Streets” we can find: $2^{48}$ unique addresses. Total Capacity: Since each address holds 1 Byte, we can address $2^{48}$ Bytes. Conversion: $2^{48} \\text{ bytes} = \\mathbf{256 \\text{ Terabytes}}$. Key Takeaway: If a pointer points to 8 bits (1 Byte) as its smallest unit, it is called Byte-Addressable. This is the standard for almost all modern CPUs, RAM, and Databases.\n12. Summary Table: Bits, Bytes, and Pointers Unit What it is Can it be addressed? Bit A single 0 or 1 (A “House”) No. Too small; would make the index too large. Byte A group of 8 bits (A “Street”) Yes. This is the standard unit for all pointers. 6-Byte Pointer A 48-bit “Address” Yes. It can find $2^{48}$ different “Streets” (Bytes). 13. The Great Trade-off: 6-Byte vs. 8-Byte Pointers If your CPU and RAM already use 8-byte (64-bit) pointers, why does the database bother shrinking them to 6 bytes on the disk? Let’s look at the mathematical “gap” between these two choices.\nThe Astronomical Difference in Scale When we increase a pointer by just 2 bytes (16 bits), the capacity doesn’t just grow—it explodes.\nPointer Size Total Bits Math ($2^n$ Bytes) Max Addressable Capacity 6 Bytes 48 bits $2^{48}$ 256 Terabytes 8 Bytes 64 bits $2^{64}$ 16 Exabytes How big is 16 Exabytes? To put that in perspective:\n1 Petabyte = 1,024 Terabytes. 1 Exabyte = 1,024 Petabytes. 16 Exabytes is roughly 65,536 times larger than 256 Terabytes. An 8-byte pointer can address more data than almost all the world’s data centers combined today. It is effectively “infinite.”\nWhy Databases Choose the “Small” 6-Byte Pointer If 8 bytes is “future-proof” and “infinite,” why choose 6 bytes? It goes back to our 8 KB Page Density.\nLet’s assume we are indexing a standard 4-byte Integer ID:\nThe 8-byte Strategy (Standard):\nEntry = 4B (ID) + 8B (Pointer) = 12 bytes Page Capacity = ~682 entries The 6-byte Strategy (Optimized):\nEntry = 4B (ID) + 6B (Pointer) = 10 bytes Page Capacity = ~819 entries The Decision: Density Over Infinity Database engineers made a calculated bet:\nThe Bet: “Nobody is going to have a single table larger than 256 Terabytes anytime soon.” The Reward: By shaving off those 2 bytes, they fit 20% more entries into every single 8 KB page. Why does this matter? Fitting 20% more entries means the B-Tree is wider. A wider tree is a shorter tree. A shorter tree means the database needs fewer “jumps” to the disk to find your data. In the world of high-performance databases, 20% more density is worth more than 16 Exabytes of unused space.\n14. Comparison Summary Feature 6-Byte Disk Pointer 8-Byte RAM Pointer Capacity 256 TB (Practical) 16 EB (Infinite) Index Speed Faster (Higher page density) Slower (Lower page density) Disk Space Saved (2 bytes per row) Wasted (Empty padding) Where it lives On your Hard Drive / SSD Inside your CPU / RAM Conclusion: The database uses “compressed” 6-byte pointers on the disk to maximize speed, and only “inflates” them to 8-byte pointers when the data enters the CPU to satisfy the hardware’s 64-bit requirement.\n15. The “Zero-Padding” Trick: Why we don’t “Under-use” RAM If the hardware is built for 64-bit (8-byte) “gulping,” aren’t we wasting the CPU’s potential by only giving it 48 bits from the disk? This is where the distinction between Storage Efficiency and Execution Speed becomes vital.\nThe Shipping Container vs. The Workbench Think of your Disk as a shipping container and your RAM as a workbench:\nOn Disk (The Container): Space is expensive. If we store 64 bits but only use 48, we are shipping “empty air.” By packing only 48 bits (6 bytes), we fit 20% more pointers in the same 8 KB container. In RAM (The Workbench): Once the data is on the workbench, the CPU must use its 64-bit “tools” to work. How the CPU handles 48-bit Pointers When the database pulls a 6-byte pointer into RAM, it performs a Zero-Padding operation. It places your 48 bits into a 64-bit “register” (a tiny pocket inside the CPU) and fills the remaining 16 bits with zeros:\n[00000000 00000000] [48 bits of actual address]\nBecause a 64-bit CPU is designed to process 64 bits in a single clock cycle, it takes exactly the same amount of time to process this padded number as it would to process a full 64-bit number. We aren’t slowing down the CPU; we are just making the Disk work less.\n",
+  "wordCount" : "1810",
+  "inLanguage": "en",
+  "datePublished": "2026-03-29T05:55:00Z",
+  "dateModified": "2026-03-29T05:55:00Z",
+  "author":{
+    "@type": "Person",
+    "name": "Rajesh Subramanian"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "http://localhost:1313/posts/2026/03/22/part2-index-introduction/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Beyond the Bytes",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "http://localhost:1313/favicon.ico"
+    }
+  }
+}
+</script>
+</head>
+<body id="top">
+    <header class="header">
+    <nav class="nav">
+        <div class="logo">
+            <a href="http://localhost:1313/" accesskey="h" title="Beyond the Bytes (Alt + H)">Beyond the Bytes</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu">
+            <li>
+                <a href="http://localhost:1313/about/" title="About">
+                    <span>About</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/journey" title="My Journey">
+                    <span>My Journey</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/posts/" title="Articles">
+                    <span>Articles</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/search/" title="Search (Alt &#43; /)" accesskey=/>
+                    <span>Search</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/categories/" title="Categories">
+                    <span>Categories</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    
+    <h1 class="post-title entry-hint-parent">
+      Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)
+      <span class="entry-hint" title="Draft">
+        <svg xmlns="http://www.w3.org/2000/svg" height="35" viewBox="0 -960 960 960" fill="currentColor">
+          <path
+            d="M160-410v-60h300v60H160Zm0-165v-60h470v60H160Zm0-165v-60h470v60H160Zm360 580v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q9 9 13 20t4 22q0 11-4.5 22.5T862.09-380L643-160H520Zm300-263-37-37 37 37ZM580-220h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19Z" />
+        </svg>
+      </span>
+    </h1>
+    <div class="post-meta"><span title='2026-03-29 05:55:00 +0000 UTC'>March 29, 2026</span>&nbsp;·&nbsp;<span>9 min</span>&nbsp;·&nbsp;<span>1810 words</span>&nbsp;·&nbsp;<span>Rajesh Subramanian</span>
+
+</div>
+  </header> <div class="toc">
+    <details  open>
+        <summary accesskey="c" title="(Alt + C)">
+            <span class="details">Table of Contents</span>
+        </summary>
+
+        <div class="inner"><ul>
+                <li>
+                    <a href="#6-the-handshake-why-os-and-database-page-sizes-differ" aria-label="6. The &ldquo;Handshake&rdquo;: Why OS and Database Page Sizes Differ">6. The &ldquo;Handshake&rdquo;: Why OS and Database Page Sizes Differ</a><ul>
+                        
+                <li>
+                    <a href="#the-generalist-ubuntu-vs-the-specialist-database" aria-label="The Generalist (Ubuntu) vs. The Specialist (Database)">The Generalist (Ubuntu) vs. The Specialist (Database)</a></li>
+                <li>
+                    <a href="#how-they-sync" aria-label="How They Sync">How They Sync</a></li></ul>
+                </li>
+                <li>
+                    <a href="#7-the-math-of-pointer-density-6-byte-vs-8-byte" aria-label="7. The Math of Pointer Density (6-byte vs. 8-byte)">7. The Math of Pointer Density (6-byte vs. 8-byte)</a><ul>
+                        <ul>
+                        
+                <li>
+                    <a href="#scenario-a-standard-64-bit-pointer-8-bytes" aria-label="Scenario A: Standard 64-bit Pointer (8 bytes)">Scenario A: Standard 64-bit Pointer (8 bytes)</a></li>
+                <li>
+                    <a href="#scenario-b-optimized-disk-pointer-6-bytes" aria-label="Scenario B: Optimized Disk Pointer (6 bytes)">Scenario B: Optimized Disk Pointer (6 bytes)</a></li></ul>
+                    </ul>
+                </li>
+                <li>
+                    <a href="#8-from-disk-to-ram-the-buffer-pool" aria-label="8. From Disk to RAM: The Buffer Pool">8. From Disk to RAM: The Buffer Pool</a></li>
+                <li>
+                    <a href="#9-the-math-of-the-6-byte-pointer-why-256-terabytes" aria-label="9. The Math of the 6-Byte Pointer: Why 256 Terabytes?">9. The Math of the 6-Byte Pointer: Why 256 Terabytes?</a><ul>
+                        
+                <li>
+                    <a href="#the-calculation" aria-label="The Calculation">The Calculation</a></li>
+                <li>
+                    <a href="#why-disk-pointers-are-6-bytes-vs-ram-pointers-are-8-bytes" aria-label="Why Disk Pointers are 6 Bytes vs. RAM Pointers are 8 Bytes">Why Disk Pointers are 6 Bytes vs. RAM Pointers are 8 Bytes</a></li>
+                <li>
+                    <a href="#the-efficiency-gain" aria-label="The Efficiency Gain">The Efficiency Gain</a></li></ul>
+                </li>
+                <li>
+                    <a href="#10-summary-the-anatomy-of-a-search" aria-label="10. Summary: The Anatomy of a Search">10. Summary: The Anatomy of a Search</a></li>
+                <li>
+                    <a href="#11-the-postman-analogy-why-we-address-bytes-not-bits" aria-label="11. The &ldquo;Postman&rdquo; Analogy: Why we address Bytes, not Bits">11. The &ldquo;Postman&rdquo; Analogy: Why we address Bytes, not Bits</a><ul>
+                        
+                <li>
+                    <a href="#the-street-vs-house-problem" aria-label="The Street vs. House Problem">The Street vs. House Problem</a></li>
+                <li>
+                    <a href="#why-not-address-every-bit" aria-label="Why not address every Bit?">Why not address every Bit?</a></li>
+                <li>
+                    <a href="#the-final-math" aria-label="The Final Math">The Final Math</a></li></ul>
+                </li>
+                <li>
+                    <a href="#12-summary-table-bits-bytes-and-pointers" aria-label="12. Summary Table: Bits, Bytes, and Pointers">12. Summary Table: Bits, Bytes, and Pointers</a></li>
+                <li>
+                    <a href="#13-the-great-trade-off-6-byte-vs-8-byte-pointers" aria-label="13. The Great Trade-off: 6-Byte vs. 8-Byte Pointers">13. The Great Trade-off: 6-Byte vs. 8-Byte Pointers</a><ul>
+                        
+                <li>
+                    <a href="#the-astronomical-difference-in-scale" aria-label="The Astronomical Difference in Scale">The Astronomical Difference in Scale</a></li>
+                <li>
+                    <a href="#why-databases-choose-the-small-6-byte-pointer" aria-label="Why Databases Choose the &ldquo;Small&rdquo; 6-Byte Pointer">Why Databases Choose the &ldquo;Small&rdquo; 6-Byte Pointer</a></li>
+                <li>
+                    <a href="#the-decision-density-over-infinity" aria-label="The Decision: Density Over Infinity">The Decision: Density Over Infinity</a></li></ul>
+                </li>
+                <li>
+                    <a href="#14-comparison-summary" aria-label="14. Comparison Summary">14. Comparison Summary</a></li>
+                <li>
+                    <a href="#15-the-zero-padding-trick-why-we-dont-under-use-ram" aria-label="15. The &ldquo;Zero-Padding&rdquo; Trick: Why we don&rsquo;t &ldquo;Under-use&rdquo; RAM">15. The &ldquo;Zero-Padding&rdquo; Trick: Why we don&rsquo;t &ldquo;Under-use&rdquo; RAM</a><ul>
+                        
+                <li>
+                    <a href="#the-shipping-container-vs-the-workbench" aria-label="The Shipping Container vs. The Workbench">The Shipping Container vs. The Workbench</a></li>
+                <li>
+                    <a href="#how-the-cpu-handles-48-bit-pointers" aria-label="How the CPU handles 48-bit Pointers">How the CPU handles 48-bit Pointers</a>
+                </li>
+            </ul>
+            </li>
+            </ul>
+        </div>
+    </details>
+</div>
+
+  <aside class="series-box" style="padding: 15px; border: 1px solid var(--border); border-radius: 8px; margin: 20px 0; background: var(--tertiary);">
+    <h4 style="margin-top: 0;">📚 Part of the <em>Introduction to Index</em> series</h4>
+    <ul style="margin-bottom: 0; list-style: none; padding-left: 10px;"><li style="margin-bottom: 5px;"><a href="http://localhost:1313/posts/2026/03/22/part1-index-introduction/" style="text-decoration: none; color: var(--primary);">Part 1 - Deep Dive: How Database Indexing Works (The B-Tree)</a></li><li style="margin-bottom: 5px;"><a href="http://localhost:1313/posts/drafts/part3-index-introduction/" style="text-decoration: none; color: var(--primary);">Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)</a></li><li style="margin-bottom: 5px;"><span style="color: var(--secondary); font-weight: bold;">👉 Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) (Current)</span></li><li style="margin-bottom: 5px;"><a href="http://localhost:1313/posts/drafts/part4-index-introduction/" style="text-decoration: none; color: var(--primary);">Part 4 - Deep Dive: How Database Indexing Works (The B-Tree)</a></li></ul>
+</aside>
+  <div class="post-content"><h2 id="6-the-handshake-why-os-and-database-page-sizes-differ">6. The &ldquo;Handshake&rdquo;: Why OS and Database Page Sizes Differ<a hidden class="anchor" aria-hidden="true" href="#6-the-handshake-why-os-and-database-page-sizes-differ">#</a></h2>
+<p>When you run <code>getconf PAGESIZE</code> on Ubuntu, you see <code>4096</code> (4 KB). Yet, your database often uses <strong>8 KB</strong> or <strong>16 KB</strong>. If the RAM can process data quickly, why is there this mismatch?</p>
+<h3 id="the-generalist-ubuntu-vs-the-specialist-database">The Generalist (Ubuntu) vs. The Specialist (Database)<a hidden class="anchor" aria-hidden="true" href="#the-generalist-ubuntu-vs-the-specialist-database">#</a></h3>
+<ul>
+<li><strong>Ubuntu (4 KB):</strong> An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the &ldquo;Goldilocks&rdquo; size for general computing.</li>
+<li><strong>Database (8 KB+):</strong> A database is a specialist. It knows its files are massive. By using a larger <strong>Logical Page</strong>, it increases <strong>Fan-out</strong> (the number of pointers per page). This keeps the B-Tree &ldquo;short and fat&rdquo; rather than &ldquo;tall and skinny,&rdquo; reducing the number of disk reads.</li>
+</ul>
+<h3 id="how-they-sync">How They Sync<a hidden class="anchor" aria-hidden="true" href="#how-they-sync">#</a></h3>
+<p>There is no &ldquo;clash&rdquo; because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches <strong>two</strong> 4 KB hardware blocks.</p>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Layer</th>
+          <th style="text-align: left">Unit</th>
+          <th style="text-align: left">Size</th>
+          <th style="text-align: left">Role</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>CPU Cache</strong></td>
+          <td style="text-align: left">Cache Line</td>
+          <td style="text-align: left">64 Bytes</td>
+          <td style="text-align: left">The ultra-fast &ldquo;bite-sized&rdquo; chunks the CPU actually chews on.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Ubuntu (OS)</strong></td>
+          <td style="text-align: left">Page</td>
+          <td style="text-align: left">4 KB</td>
+          <td style="text-align: left">The standard unit for moving data from Disk to RAM.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Database</strong></td>
+          <td style="text-align: left">Page/Block</td>
+          <td style="text-align: left">8 KB</td>
+          <td style="text-align: left">The logical unit for organizing the B-Tree index.</td>
+      </tr>
+  </tbody>
+</table>
+<hr>
+<h2 id="7-the-math-of-pointer-density-6-byte-vs-8-byte">7. The Math of Pointer Density (6-byte vs. 8-byte)<a hidden class="anchor" aria-hidden="true" href="#7-the-math-of-pointer-density-6-byte-vs-8-byte">#</a></h2>
+<p>You might wonder: <em>If a 64-bit system uses 8-byte addresses, why do databases try to use 6-byte pointers?</em></p>
+<p>It comes down to <strong>Page Density</strong>. A smaller pointer allows more entries to fit into a single 8 KB page. Let’s look at the math for a table indexing a 4-byte Integer ID:</p>
+<h4 id="scenario-a-standard-64-bit-pointer-8-bytes">Scenario A: Standard 64-bit Pointer (8 bytes)<a hidden class="anchor" aria-hidden="true" href="#scenario-a-standard-64-bit-pointer-8-bytes">#</a></h4>
+<ul>
+<li><strong>Entry Size:</strong> 4B (ID) + 8B (Pointer) = <strong>12 bytes</strong></li>
+<li><strong>Entries per Page:</strong> $8192 / 12 \approx \mathbf{682}$</li>
+<li><strong>Tree Capacity (3 Levels):</strong> $682^3 \approx \mathbf{317}$ <strong>Million rows</strong></li>
+</ul>
+<h4 id="scenario-b-optimized-disk-pointer-6-bytes">Scenario B: Optimized Disk Pointer (6 bytes)<a hidden class="anchor" aria-hidden="true" href="#scenario-b-optimized-disk-pointer-6-bytes">#</a></h4>
+<ul>
+<li><strong>Entry Size:</strong> 4B (ID) + 6B (Pointer) = <strong>10 bytes</strong></li>
+<li><strong>Entries per Page:</strong> $8192 / 10 \approx \mathbf{819}$</li>
+<li><strong>Tree Capacity (3 Levels):</strong> $819^3 \approx \mathbf{550}$ <strong>Million rows</strong></li>
+</ul>
+<p><strong>The Deep Insight:</strong> By &ldquo;shaving off&rdquo; 2 bytes from the pointer, we increased the capacity of a 3-level tree by over <strong>230 million rows</strong> without adding a single extra &ldquo;jump&rdquo; (Disk I/O). In the database world, <strong>smaller is faster.</strong></p>
+<hr>
+<h2 id="8-from-disk-to-ram-the-buffer-pool">8. From Disk to RAM: The Buffer Pool<a hidden class="anchor" aria-hidden="true" href="#8-from-disk-to-ram-the-buffer-pool">#</a></h2>
+<p>The database doesn&rsquo;t read your index byte-by-byte.</p>
+<ol>
+<li><strong>On Disk:</strong> The index is stored in 8 KB chunks.</li>
+<li><strong>The Request:</strong> You search for <code>ID 72</code>.</li>
+<li><strong>The Fetch:</strong> The DB finds the 8 KB page containing <code>72</code> and copies it <strong>exactly</strong> into a dedicated section of RAM called the <strong>Buffer Pool</strong>.</li>
+<li><strong>The CPU Speed:</strong> Once that 8 KB page is in RAM, the CPU can scan those 819 entries in nanoseconds.</li>
+</ol>
+<hr>
+<h2 id="9-the-math-of-the-6-byte-pointer-why-256-terabytes">9. The Math of the 6-Byte Pointer: Why 256 Terabytes?<a hidden class="anchor" aria-hidden="true" href="#9-the-math-of-the-6-byte-pointer-why-256-terabytes">#</a></h2>
+<p>You noticed a critical detail: $2^{48}$ is a massive number, but why does it equal <strong>256 Terabytes</strong> and not Terabits?</p>
+<h3 id="the-calculation">The Calculation<a hidden class="anchor" aria-hidden="true" href="#the-calculation">#</a></h3>
+<p>In computer architecture, addresses point to <strong>Bytes</strong>, not Bits.</p>
+<ul>
+<li><strong>1 Byte</strong> = 8 Bits.</li>
+<li><strong>6 Bytes</strong> = 48 Bits.</li>
+<li><strong>Total Addressable Units:</strong> $2^{48}$ bytes.</li>
+</ul>
+<p>Let&rsquo;s break the math down:
+$$2^{10} = 1,024 \text{ (1 Kilobyte)}$$
+$$2^{20} = 1,048,576 \text{ (1 Megabyte)}$$
+$$2^{30} = 1,073,741,824 \text{ (1 Gigabyte)}$$
+$$2^{40} = 1,099,511,627,776 \text{ (1 Terabyte)}$$</p>
+<p>So, $2^{48}$ is actually $2^8 \times 2^{40}$:
+$$256 \times 1 \text{ Terabyte} = \mathbf{256 \text{ Terabytes}}$$</p>
+<h3 id="why-disk-pointers-are-6-bytes-vs-ram-pointers-are-8-bytes">Why Disk Pointers are 6 Bytes vs. RAM Pointers are 8 Bytes<a hidden class="anchor" aria-hidden="true" href="#why-disk-pointers-are-6-bytes-vs-ram-pointers-are-8-bytes">#</a></h3>
+<p>This is a classic &ldquo;Software vs. Hardware&rdquo; distinction.</p>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Feature</th>
+          <th style="text-align: left">RAM Pointer (Hardware)</th>
+          <th style="text-align: left">Disk Pointer (Database File)</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>Size</strong></td>
+          <td style="text-align: left"><strong>8 Bytes</strong> (64-bit)</td>
+          <td style="text-align: left"><strong>6 Bytes</strong> (48-bit)</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Reasoning</strong></td>
+          <td style="text-align: left"><strong>Hardware Mandate:</strong> Your 64-bit CPU is &ldquo;wired&rdquo; to read 8-byte chunks. It is a physical requirement of the memory bus.</td>
+          <td style="text-align: left"><strong>Storage Optimization:</strong> Database engineers realized a single table rarely exceeds 256TB. Saving 2 bytes per pointer is a massive win.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>The &ldquo;Translation&rdquo;</strong></td>
+          <td style="text-align: left">The CPU uses the address directly to talk to the RAM sticks.</td>
+          <td style="text-align: left">When the DB loads a page into RAM, it &ldquo;pads&rdquo; the 6-byte pointer with two extra zeros to make it 8 bytes so the CPU can read it.</td>
+      </tr>
+  </tbody>
+</table>
+<h3 id="the-efficiency-gain">The Efficiency Gain<a hidden class="anchor" aria-hidden="true" href="#the-efficiency-gain">#</a></h3>
+<p>By using 6 bytes on disk instead of 8, we aren&rsquo;t just saving disk space; we are increasing <strong>Page Density</strong>. As we calculated earlier, this &ldquo;shaving&rdquo; of 2 bytes allows us to fit ~20% more entries into every 8 KB page.</p>
+<p><strong>More entries per page = A wider tree = Fewer disk seeks = Faster Queries.</strong></p>
+<hr>
+<h2 id="10-summary-the-anatomy-of-a-search">10. Summary: The Anatomy of a Search<a hidden class="anchor" aria-hidden="true" href="#10-summary-the-anatomy-of-a-search">#</a></h2>
+<p>To wrap up the journey from the query to the hardware:</p>
+<ol>
+<li><strong>The Query:</strong> You ask for <code>WHERE ID = 72</code>.</li>
+<li><strong>The Root/Internal Nodes:</strong> The DB navigates through 8 KB pages in RAM (or fetches them from disk).</li>
+<li><strong>The Leaf Node:</strong> The DB finds the entry for <code>72</code>. It reads the <strong>6-byte disk pointer</strong>.</li>
+<li><strong>The Padding:</strong> The DB software converts those 6 bytes into an <strong>8-byte RAM address</strong>.</li>
+<li><strong>The Fetch:</strong> The CPU uses that 8-byte address to grab the actual row data from the Buffer Pool or Disk.</li>
+</ol>
+<h2 id="11-the-postman-analogy-why-we-address-bytes-not-bits">11. The &ldquo;Postman&rdquo; Analogy: Why we address Bytes, not Bits<a hidden class="anchor" aria-hidden="true" href="#11-the-postman-analogy-why-we-address-bytes-not-bits">#</a></h2>
+<p>One of the most common points of confusion in low-level systems is why a 48-bit pointer address equals <strong>256 Terabytes</strong> and not <strong>Terabits</strong>. It all comes down to the <strong>Addressable Unit</strong>.</p>
+<h3 id="the-street-vs-house-problem">The Street vs. House Problem<a hidden class="anchor" aria-hidden="true" href="#the-street-vs-house-problem">#</a></h3>
+<p>Imagine you are designing a postal system for a massive city:</p>
+<ul>
+<li><strong>The Bits (The Houses):</strong> There are billions of houses. If you give every single house a unique, 50-digit GPS coordinate, your &ldquo;Address Book&rdquo; (the Index) would eventually become larger than the city itself!</li>
+<li><strong>The Byte (The Street):</strong> To be efficient, you group 8 houses together into one <strong>Street</strong>. Now, the postman only needs one address for the entire street.</li>
+<li><strong>The Rule:</strong> In computer architecture, the smallest &ldquo;Street&rdquo; we address is <strong>1 Byte (8 bits)</strong>.</li>
+</ul>
+<h3 id="why-not-address-every-bit">Why not address every Bit?<a hidden class="anchor" aria-hidden="true" href="#why-not-address-every-bit">#</a></h3>
+<p>If we tried to give every single bit its own unique address:</p>
+<ol>
+<li><strong>Index Bloat:</strong> The index would take up 8x more space.</li>
+<li><strong>Hardware Complexity:</strong> The CPU and RAM would have to be 8x more complex to manage those tiny, individual destinations.</li>
+</ol>
+<p>Instead, the CPU asks for the address of a <strong>Byte</strong>, pulls all 8 bits into its &ldquo;hands&rdquo; (the registers), changes the bit it needs, and puts the whole Byte back.</p>
+<h3 id="the-final-math">The Final Math<a hidden class="anchor" aria-hidden="true" href="#the-final-math">#</a></h3>
+<p>Because every &ldquo;Street&rdquo; (Byte) has one unique pointer address:</p>
+<ol>
+<li><strong>Address size:</strong> 6 Bytes (48 bits).</li>
+<li><strong>Number of &ldquo;Streets&rdquo; we can find:</strong> $2^{48}$ unique addresses.</li>
+<li><strong>Total Capacity:</strong> Since each address holds 1 Byte, we can address $2^{48}$ <strong>Bytes</strong>.</li>
+<li><strong>Conversion:</strong> $2^{48} \text{ bytes} = \mathbf{256 \text{ Terabytes}}$.</li>
+</ol>
+<blockquote>
+<p><strong>Key Takeaway:</strong> If a pointer points to 8 bits (1 Byte) as its smallest unit, it is called <strong>Byte-Addressable</strong>. This is the standard for almost all modern CPUs, RAM, and Databases.</p>
+</blockquote>
+<hr>
+<h2 id="12-summary-table-bits-bytes-and-pointers">12. Summary Table: Bits, Bytes, and Pointers<a hidden class="anchor" aria-hidden="true" href="#12-summary-table-bits-bytes-and-pointers">#</a></h2>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Unit</th>
+          <th style="text-align: left">What it is</th>
+          <th style="text-align: left">Can it be addressed?</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>Bit</strong></td>
+          <td style="text-align: left">A single 0 or 1 (A &ldquo;House&rdquo;)</td>
+          <td style="text-align: left"><strong>No.</strong> Too small; would make the index too large.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Byte</strong></td>
+          <td style="text-align: left">A group of 8 bits (A &ldquo;Street&rdquo;)</td>
+          <td style="text-align: left"><strong>Yes.</strong> This is the standard unit for all pointers.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>6-Byte Pointer</strong></td>
+          <td style="text-align: left">A 48-bit &ldquo;Address&rdquo;</td>
+          <td style="text-align: left"><strong>Yes.</strong> It can find $2^{48}$ different &ldquo;Streets&rdquo; (Bytes).</td>
+      </tr>
+  </tbody>
+</table>
+<h2 id="13-the-great-trade-off-6-byte-vs-8-byte-pointers">13. The Great Trade-off: 6-Byte vs. 8-Byte Pointers<a hidden class="anchor" aria-hidden="true" href="#13-the-great-trade-off-6-byte-vs-8-byte-pointers">#</a></h2>
+<p>If your CPU and RAM already use 8-byte (64-bit) pointers, why does the database bother shrinking them to 6 bytes on the disk? Let&rsquo;s look at the mathematical &ldquo;gap&rdquo; between these two choices.</p>
+<h3 id="the-astronomical-difference-in-scale">The Astronomical Difference in Scale<a hidden class="anchor" aria-hidden="true" href="#the-astronomical-difference-in-scale">#</a></h3>
+<p>When we increase a pointer by just 2 bytes (16 bits), the capacity doesn&rsquo;t just grow—it explodes.</p>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Pointer Size</th>
+          <th style="text-align: left">Total Bits</th>
+          <th style="text-align: left">Math ($2^n$ Bytes)</th>
+          <th style="text-align: left">Max Addressable Capacity</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>6 Bytes</strong></td>
+          <td style="text-align: left">48 bits</td>
+          <td style="text-align: left">$2^{48}$</td>
+          <td style="text-align: left"><strong>256 Terabytes</strong></td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>8 Bytes</strong></td>
+          <td style="text-align: left">64 bits</td>
+          <td style="text-align: left">$2^{64}$</td>
+          <td style="text-align: left"><strong>16 Exabytes</strong></td>
+      </tr>
+  </tbody>
+</table>
+<p><strong>How big is 16 Exabytes?</strong>
+To put that in perspective:</p>
+<ul>
+<li>1 Petabyte = 1,024 Terabytes.</li>
+<li>1 Exabyte = 1,024 Petabytes.</li>
+<li><strong>16 Exabytes</strong> is roughly <strong>65,536 times larger</strong> than 256 Terabytes.</li>
+</ul>
+<p>An 8-byte pointer can address more data than almost all the world&rsquo;s data centers combined today. It is effectively &ldquo;infinite.&rdquo;</p>
+<h3 id="why-databases-choose-the-small-6-byte-pointer">Why Databases Choose the &ldquo;Small&rdquo; 6-Byte Pointer<a hidden class="anchor" aria-hidden="true" href="#why-databases-choose-the-small-6-byte-pointer">#</a></h3>
+<p>If 8 bytes is &ldquo;future-proof&rdquo; and &ldquo;infinite,&rdquo; why choose 6 bytes? It goes back to our <strong>8 KB Page Density</strong>.</p>
+<p>Let&rsquo;s assume we are indexing a standard 4-byte Integer ID:</p>
+<ol>
+<li>
+<p><strong>The 8-byte Strategy (Standard):</strong></p>
+<ul>
+<li>Entry = 4B (ID) + 8B (Pointer) = <strong>12 bytes</strong></li>
+<li>Page Capacity = <strong>~682 entries</strong></li>
+</ul>
+</li>
+<li>
+<p><strong>The 6-byte Strategy (Optimized):</strong></p>
+<ul>
+<li>Entry = 4B (ID) + 6B (Pointer) = <strong>10 bytes</strong></li>
+<li>Page Capacity = <strong>~819 entries</strong></li>
+</ul>
+</li>
+</ol>
+<h3 id="the-decision-density-over-infinity">The Decision: Density Over Infinity<a hidden class="anchor" aria-hidden="true" href="#the-decision-density-over-infinity">#</a></h3>
+<p>Database engineers made a calculated bet:</p>
+<ul>
+<li><strong>The Bet:</strong> &ldquo;Nobody is going to have a single table larger than 256 Terabytes anytime soon.&rdquo;</li>
+<li><strong>The Reward:</strong> By shaving off those 2 bytes, they fit <strong>20% more entries</strong> into every single 8 KB page.</li>
+</ul>
+<p><strong>Why does this matter?</strong> Fitting 20% more entries means the B-Tree is <strong>wider</strong>. A wider tree is a <strong>shorter tree</strong>. A shorter tree means the database needs fewer &ldquo;jumps&rdquo; to the disk to find your data. In the world of high-performance databases, <strong>20% more density is worth more than 16 Exabytes of unused space.</strong></p>
+<hr>
+<h2 id="14-comparison-summary">14. Comparison Summary<a hidden class="anchor" aria-hidden="true" href="#14-comparison-summary">#</a></h2>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Feature</th>
+          <th style="text-align: left">6-Byte Disk Pointer</th>
+          <th style="text-align: left">8-Byte RAM Pointer</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>Capacity</strong></td>
+          <td style="text-align: left">256 TB (Practical)</td>
+          <td style="text-align: left">16 EB (Infinite)</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Index Speed</strong></td>
+          <td style="text-align: left"><strong>Faster</strong> (Higher page density)</td>
+          <td style="text-align: left"><strong>Slower</strong> (Lower page density)</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Disk Space</strong></td>
+          <td style="text-align: left">Saved (2 bytes per row)</td>
+          <td style="text-align: left">Wasted (Empty padding)</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Where it lives</strong></td>
+          <td style="text-align: left">On your Hard Drive / SSD</td>
+          <td style="text-align: left">Inside your CPU / RAM</td>
+      </tr>
+  </tbody>
+</table>
+<blockquote>
+<p><strong>Conclusion:</strong> The database uses &ldquo;compressed&rdquo; 6-byte pointers on the disk to maximize speed, and only &ldquo;inflates&rdquo; them to 8-byte pointers when the data enters the CPU to satisfy the hardware&rsquo;s 64-bit requirement.</p>
+</blockquote>
+<h2 id="15-the-zero-padding-trick-why-we-dont-under-use-ram">15. The &ldquo;Zero-Padding&rdquo; Trick: Why we don&rsquo;t &ldquo;Under-use&rdquo; RAM<a hidden class="anchor" aria-hidden="true" href="#15-the-zero-padding-trick-why-we-dont-under-use-ram">#</a></h2>
+<p>If the hardware is built for 64-bit (8-byte) &ldquo;gulping,&rdquo; aren&rsquo;t we wasting the CPU&rsquo;s potential by only giving it 48 bits from the disk? This is where the distinction between <strong>Storage Efficiency</strong> and <strong>Execution Speed</strong> becomes vital.</p>
+<h3 id="the-shipping-container-vs-the-workbench">The Shipping Container vs. The Workbench<a hidden class="anchor" aria-hidden="true" href="#the-shipping-container-vs-the-workbench">#</a></h3>
+<p>Think of your <strong>Disk</strong> as a shipping container and your <strong>RAM</strong> as a workbench:</p>
+<ul>
+<li><strong>On Disk (The Container):</strong> Space is expensive. If we store 64 bits but only use 48, we are shipping &ldquo;empty air.&rdquo; By packing only 48 bits (6 bytes), we fit 20% more pointers in the same 8 KB container.</li>
+<li><strong>In RAM (The Workbench):</strong> Once the data is on the workbench, the CPU must use its 64-bit &ldquo;tools&rdquo; to work.</li>
+</ul>
+<h3 id="how-the-cpu-handles-48-bit-pointers">How the CPU handles 48-bit Pointers<a hidden class="anchor" aria-hidden="true" href="#how-the-cpu-handles-48-bit-pointers">#</a></h3>
+<p>When the database pulls a 6-byte pointer into RAM, it performs a <strong>Zero-Padding</strong> operation. It places your 48 bits into a 64-bit &ldquo;register&rdquo; (a tiny pocket inside the CPU) and fills the remaining 16 bits with zeros:</p>
+<p><code>[00000000 00000000] [48 bits of actual address]</code></p>
+<p>Because a 64-bit CPU is designed to process 64 bits in a single clock cycle, it takes <strong>exactly the same amount of time</strong> to process this padded number as it would to process a full 64-bit number. We aren&rsquo;t slowing down the CPU; we are just making the Disk work less.</p>
+<hr>
+
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+      <li><a href="http://localhost:1313/tags/databases/">Databases</a></li>
+      <li><a href="http://localhost:1313/tags/performance/">Performance</a></li>
+      <li><a href="http://localhost:1313/tags/computer-science/">Computer Science</a></li>
+    </ul>
+<nav class="paginav">
+  <a class="next" href="http://localhost:1313/posts/drafts/part4-index-introduction/">
+    <span class="title">Next »</span>
+    <br>
+    <span>Part 4 - Deep Dive: How Database Indexing Works (The B-Tree)</span>
+  </a>
+</nav>
+
+
+<ul class="share-buttons">
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on x"
+            href="https://x.com/intent/tweet/?text=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;url=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f&amp;hashtags=Databases%2cPerformance%2cComputerScience">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M512 62.554 L 512 449.446 C 512 483.97 483.97 512 449.446 512 L 62.554 512 C 28.03 512 0 483.97 0 449.446 L 0 62.554 C 0 28.03 28.029 0 62.554 0 L 449.446 0 C 483.971 0 512 28.03 512 62.554 Z M 269.951 190.75 L 182.567 75.216 L 56 75.216 L 207.216 272.95 L 63.9 436.783 L 125.266 436.783 L 235.9 310.383 L 332.567 436.783 L 456 436.783 L 298.367 228.367 L 432.367 75.216 L 371.033 75.216 Z M 127.633 110 L 164.101 110 L 383.481 400.065 L 349.5 400.065 Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on linkedin"
+            href="https://www.linkedin.com/shareArticle?mini=true&amp;url=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f&amp;title=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;summary=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;source=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-386.892,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Zm-288.985,423.278l0,-225.717l-75.04,0l0,225.717l75.04,0Zm270.539,0l0,-129.439c0,-69.333 -37.018,-101.586 -86.381,-101.586c-39.804,0 -57.634,21.891 -67.617,37.266l0,-31.958l-75.021,0c0.995,21.181 0,225.717 0,225.717l75.02,0l0,-126.056c0,-6.748 0.486,-13.492 2.474,-18.315c5.414,-13.475 17.767,-27.434 38.494,-27.434c27.135,0 38.007,20.707 38.007,51.037l0,120.768l75.024,0Zm-307.552,-334.556c-25.674,0 -42.448,16.879 -42.448,39.002c0,21.658 16.264,39.002 41.455,39.002l0.484,0c26.165,0 42.452,-17.344 42.452,-39.002c-0.485,-22.092 -16.241,-38.954 -41.943,-39.002Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on reddit"
+            href="https://reddit.com/submit?url=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f&title=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-386.892,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Zm-3.446,265.638c0,-22.964 -18.616,-41.58 -41.58,-41.58c-11.211,0 -21.361,4.457 -28.841,11.666c-28.424,-20.508 -67.586,-33.757 -111.204,-35.278l18.941,-89.121l61.884,13.157c0.756,15.734 13.642,28.29 29.56,28.29c16.407,0 29.706,-13.299 29.706,-29.701c0,-16.403 -13.299,-29.702 -29.706,-29.702c-11.666,0 -21.657,6.792 -26.515,16.578l-69.105,-14.69c-1.922,-0.418 -3.939,-0.042 -5.585,1.036c-1.658,1.073 -2.811,2.761 -3.224,4.686l-21.152,99.438c-44.258,1.228 -84.046,14.494 -112.837,35.232c-7.468,-7.164 -17.589,-11.591 -28.757,-11.591c-22.965,0 -41.585,18.616 -41.585,41.58c0,16.896 10.095,31.41 24.568,37.918c-0.639,4.135 -0.99,8.328 -0.99,12.576c0,63.977 74.469,115.836 166.33,115.836c91.861,0 166.334,-51.859 166.334,-115.836c0,-4.218 -0.347,-8.387 -0.977,-12.493c14.564,-6.47 24.735,-21.034 24.735,-38.001Zm-119.474,108.193c-20.27,20.241 -59.115,21.816 -70.534,21.816c-11.428,0 -50.277,-1.575 -70.522,-21.82c-3.007,-3.008 -3.007,-7.882 0,-10.889c3.003,-2.999 7.882,-3.003 10.885,0c12.777,12.781 40.11,17.317 59.637,17.317c19.522,0 46.86,-4.536 59.657,-17.321c3.016,-2.999 7.886,-2.995 10.885,0.008c3.008,3.011 3.003,7.882 -0.008,10.889Zm-5.23,-48.781c-16.373,0 -29.701,-13.324 -29.701,-29.698c0,-16.381 13.328,-29.714 29.701,-29.714c16.378,0 29.706,13.333 29.706,29.714c0,16.374 -13.328,29.698 -29.706,29.698Zm-160.386,-29.702c0,-16.381 13.328,-29.71 29.714,-29.71c16.369,0 29.689,13.329 29.689,29.71c0,16.373 -13.32,29.693 -29.689,29.693c-16.386,0 -29.714,-13.32 -29.714,-29.693Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on facebook"
+            href="https://facebook.com/sharer/sharer.php?u=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-106.468,0l0,-192.915l66.6,0l12.672,-82.621l-79.272,0l0,-53.617c0,-22.603 11.073,-44.636 46.58,-44.636l36.042,0l0,-70.34c0,0 -32.71,-5.582 -63.982,-5.582c-65.288,0 -107.96,39.569 -107.96,111.204l0,62.971l-72.573,0l0,82.621l72.573,0l0,192.915l-191.104,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on whatsapp"
+            href="https://api.whatsapp.com/send?text=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29%20-%20http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-386.892,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Zm-58.673,127.703c-33.842,-33.881 -78.847,-52.548 -126.798,-52.568c-98.799,0 -179.21,80.405 -179.249,179.234c-0.013,31.593 8.241,62.428 23.927,89.612l-25.429,92.884l95.021,-24.925c26.181,14.28 55.659,21.807 85.658,21.816l0.074,0c98.789,0 179.206,-80.413 179.247,-179.243c0.018,-47.895 -18.61,-92.93 -52.451,-126.81Zm-126.797,275.782l-0.06,0c-26.734,-0.01 -52.954,-7.193 -75.828,-20.767l-5.441,-3.229l-56.386,14.792l15.05,-54.977l-3.542,-5.637c-14.913,-23.72 -22.791,-51.136 -22.779,-79.287c0.033,-82.142 66.867,-148.971 149.046,-148.971c39.793,0.014 77.199,15.531 105.329,43.692c28.128,28.16 43.609,65.592 43.594,105.4c-0.034,82.149 -66.866,148.983 -148.983,148.984Zm81.721,-111.581c-4.479,-2.242 -26.499,-13.075 -30.604,-14.571c-4.105,-1.495 -7.091,-2.241 -10.077,2.241c-2.986,4.483 -11.569,14.572 -14.182,17.562c-2.612,2.988 -5.225,3.364 -9.703,1.12c-4.479,-2.241 -18.91,-6.97 -36.017,-22.23c-13.314,-11.876 -22.304,-26.542 -24.916,-31.026c-2.612,-4.484 -0.279,-6.908 1.963,-9.14c2.016,-2.007 4.48,-5.232 6.719,-7.847c2.24,-2.615 2.986,-4.484 4.479,-7.472c1.493,-2.99 0.747,-5.604 -0.374,-7.846c-1.119,-2.241 -10.077,-24.288 -13.809,-33.256c-3.635,-8.733 -7.327,-7.55 -10.077,-7.688c-2.609,-0.13 -5.598,-0.158 -8.583,-0.158c-2.986,0 -7.839,1.121 -11.944,5.604c-4.105,4.484 -15.675,15.32 -15.675,37.364c0,22.046 16.048,43.342 18.287,46.332c2.24,2.99 31.582,48.227 76.511,67.627c10.685,4.615 19.028,7.371 25.533,9.434c10.728,3.41 20.492,2.929 28.209,1.775c8.605,-1.285 26.499,-10.833 30.231,-21.295c3.732,-10.464 3.732,-19.431 2.612,-21.298c-1.119,-1.869 -4.105,-2.99 -8.583,-5.232Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on telegram"
+            href="https://telegram.me/share/url?text=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;url=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f">
+            <svg version="1.1" xml:space="preserve" viewBox="2 2 28 28" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M26.49,29.86H5.5a3.37,3.37,0,0,1-2.47-1,3.35,3.35,0,0,1-1-2.47V5.48A3.36,3.36,0,0,1,3,3,3.37,3.37,0,0,1,5.5,2h21A3.38,3.38,0,0,1,29,3a3.36,3.36,0,0,1,1,2.46V26.37a3.35,3.35,0,0,1-1,2.47A3.38,3.38,0,0,1,26.49,29.86Zm-5.38-6.71a.79.79,0,0,0,.85-.66L24.73,9.24a.55.55,0,0,0-.18-.46.62.62,0,0,0-.41-.17q-.08,0-16.53,6.11a.59.59,0,0,0-.41.59.57.57,0,0,0,.43.52l4,1.24,1.61,4.83a.62.62,0,0,0,.63.43.56.56,0,0,0,.4-.17L16.54,20l4.09,3A.9.9,0,0,0,21.11,23.15ZM13.8,20.71l-1.21-4q8.72-5.55,8.78-5.55c.15,0,.23,0,.23.16a.18.18,0,0,1,0,.06s-2.51,2.3-7.52,6.8Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 2 - Deep Dive: How Database Indexing Works (The B-Tree) on ycombinator"
+            href="https://news.ycombinator.com/submitlink?t=Part%202%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&u=http%3a%2f%2flocalhost%3a1313%2fposts%2f2026%2f03%2f22%2fpart2-index-introduction%2f">
+            <svg version="1.1" xml:space="preserve" width="30px" height="30px" viewBox="0 0 512 512" fill="currentColor"
+                xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">
+                <path
+                    d="M449.446 0C483.971 0 512 28.03 512 62.554L512 449.446C512 483.97 483.97 512 449.446 512L62.554 512C28.03 512 0 483.97 0 449.446L0 62.554C0 28.03 28.029 0 62.554 0L449.446 0ZM183.8767 87.9921H121.8427L230.6673 292.4508V424.0079H281.3328V292.4508L390.1575 87.9921H328.1233L256 238.2489z" />
+            </svg>
+        </a>
+    </li>
+</ul>
+
+  </footer><script src="https://giscus.app/client.js"
+        data-repo="srajesh2712/srajesh2712.github.io"
+        data-repo-id="R_kgDOOWPLLQ"
+        data-category="General"
+        data-category-id="DIC_kwDOOWPLLc4C2-RG"
+        data-mapping="pathname"
+        data-strict="0"
+        data-reactions-enabled="1"
+        data-emit-metadata="0"
+        data-input-position="bottom"
+        data-theme="preferred_color_scheme"
+        data-lang="en"
+        crossorigin="anonymous"
+        async>
+</script>
+
+</article>
+    </main>
+    
+<footer class="footer">
+        <span>&copy; 2026 <a href="http://localhost:1313/">Beyond the Bytes</a></span> · 
+
+    <span>
+        Powered by
+        <a href="https://gohugo.io/" rel="noopener noreferrer" target="_blank">Hugo</a> &
+        <a href="https://github.com/adityatelange/hugo-PaperMod/" rel="noopener" target="_blank">PaperMod</a>
+    </span>
+</footer>
+<a href="#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 6" fill="currentColor">
+        <path d="M12 6H0l6-6z" />
+    </svg>
+</a><script src="https://cdn.jsdelivr.net/npm/medium-zoom@latest/dist/medium-zoom.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const zoom = mediumZoom('.post-content img:not(.cover-image)', {
+            margin: 24,
+            background: 'var(--theme)',
+            scrollOffset: 0,
+        });
+    });
+</script>
+
+<script>
+    let menu = document.getElementById('menu');
+    if (menu) {
+        
+        const scrollPosition = localStorage.getItem("menu-scroll-position");
+        if (scrollPosition) {
+            menu.scrollLeft = parseInt(scrollPosition, 10);
+        }
+        
+        menu.onscroll = function () {
+            localStorage.setItem("menu-scroll-position", menu.scrollLeft);
+        }
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener("click", function (e) {
+            e.preventDefault();
+            var id = this.getAttribute("href").substr(1);
+            if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView({
+                    behavior: "smooth"
+                });
+            } else {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView();
+            }
+            if (id === "top") {
+                history.replaceState(null, null, " ");
+            } else {
+                history.pushState(null, null, `#${id}`);
+            }
+        });
+    });
+
+</script>
+<script>
+    var mybutton = document.getElementById("top-link");
+    window.onscroll = function () {
+        if (document.body.scrollTop > 800 || document.documentElement.scrollTop > 800) {
+            mybutton.style.visibility = "visible";
+            mybutton.style.opacity = "1";
+        } else {
+            mybutton.style.visibility = "hidden";
+            mybutton.style.opacity = "0";
+        }
+    };
+
+</script>
+<script>
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+        const html = document.querySelector("html");
+        if (html.dataset.theme === "dark") {
+            html.dataset.theme = 'light';
+            localStorage.setItem("pref-theme", 'light');
+        } else {
+            html.dataset.theme = 'dark';
+            localStorage.setItem("pref-theme", 'dark');
+        }
+    })
+
+</script>
+<script>
+    document.querySelectorAll('pre > code').forEach((codeblock) => {
+        const container = codeblock.parentNode.parentNode;
+
+        const copybutton = document.createElement('button');
+        copybutton.classList.add('copy-code');
+        copybutton.innerHTML = 'copy';
+
+        function copyingDone() {
+            copybutton.innerHTML = 'copied!';
+            setTimeout(() => {
+                copybutton.innerHTML = 'copy';
+            }, 2000);
+        }
+
+        copybutton.addEventListener('click', (cb) => {
+            if ('clipboard' in navigator) {
+                navigator.clipboard.writeText(codeblock.textContent);
+                copyingDone();
+                return;
+            }
+
+            const range = document.createRange();
+            range.selectNodeContents(codeblock);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+                document.execCommand('copy');
+                copyingDone();
+            } catch (e) { };
+            selection.removeRange(range);
+        });
+
+        if (container.classList.contains("highlight")) {
+            container.appendChild(copybutton);
+        } else if (container.parentNode.firstChild == container) {
+            
+        } else if (codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName == "TABLE") {
+            
+            codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(copybutton);
+        } else {
+            
+            codeblock.parentNode.appendChild(copybutton);
+        }
+    });
+</script>
+</body>
+
+</html>
