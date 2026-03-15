@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>LSM on Beyond the Bytes</title>
+    <link>http://localhost:1313/tags/lsm/</link>
+    <description>Recent content in LSM on Beyond the Bytes</description>
+    <generator>Hugo -- 0.157.0</generator>
+    <language>en-us</language>
+    <lastBuildDate>Sun, 01 Mar 2026 10:00:00 +0000</lastBuildDate>
+    <atom:link href="http://localhost:1313/tags/lsm/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Part 3 - LSM Trees: The Write-Speed Demons</title>
+      <link>http://localhost:1313/posts/drafts/lsm/</link>
+      <pubDate>Sun, 01 Mar 2026 10:00:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/drafts/lsm/</guid>
+      <description>&lt;h3 id=&#34;how-the-lsm-tree-factory-works&#34;&gt;How the LSM Tree Factory Works&lt;/h3&gt;
+&lt;div class=&#34;mermaid&#34;&gt;
+graph TD
+subgraph RAM [Volatile Memory]
+A[Write Request] --&gt; B[Write Ahead Log - WAL]
+A --&gt; C[MemTable - Sorted SkipList]
+end
+
+    subgraph DISK [Persistent Storage]
+        C -- &#34;Flush when full (e.g. 64MB)&#34; --&gt; D[SSTable L0 - Newest]
+        D -- &#34;Compaction&#34; --&gt; E[SSTable L1]
+        E -- &#34;Compaction&#34; --&gt; F[SSTable L2 - Oldest/Largest]
+    end
+
+    subgraph Optimization [Read Boosters]
+        G[Bloom Filter] -. &#34;Checks before disk read&#34; .-&gt; D
+    end
+
+  
+&lt;/div&gt;&lt;script src=&#34;https://unpkg.com/mermaid@10/dist/mermaid.min.js&#34;&gt;&lt;/script&gt;
+&lt;script&gt;
+    document.addEventListener(&#39;DOMContentLoaded&#39;, function() {
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: &#39;dark&#39;,
+            securityLevel: &#39;loose&#39;,
+        });
+    });
+&lt;/script&gt;</description>
+    </item>
+  </channel>
+</rss>

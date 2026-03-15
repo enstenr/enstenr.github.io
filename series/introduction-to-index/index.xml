@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Introduction to Index on Beyond the Bytes</title>
+    <link>http://localhost:1313/series/introduction-to-index/</link>
+    <description>Recent content in Introduction to Index on Beyond the Bytes</description>
+    <generator>Hugo -- 0.157.0</generator>
+    <language>en-us</language>
+    <lastBuildDate>Sun, 29 Mar 2026 05:55:00 +0000</lastBuildDate>
+    <atom:link href="http://localhost:1313/series/introduction-to-index/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Part 4 - Deep Dive: How Database Indexing Works (The B-Tree)</title>
+      <link>http://localhost:1313/posts/drafts/part4-index-introduction/</link>
+      <pubDate>Sun, 29 Mar 2026 05:55:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/drafts/part4-index-introduction/</guid>
+      <description>&lt;ol start=&#34;28&#34;&gt;
+&lt;li&gt;The &amp;ldquo;Heavy Data&amp;rdquo; Reality: TSVectors&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;I noticed you are building search_vector for your topic table using to_tsvector. This adds a new layer to our 8 KB Page math:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;The Box Size: Our UUID was 16 bytes. A tsvector of a description can be 500+ bytes.
+
+The Denominator: Instead of fitting 819 entries in an 8 KB page, a search index (GIN index) might only fit 10-15 entries per page.
+
+The Performance Impact: This is why Full-Text Search is &amp;quot;heavy.&amp;quot; Every search requires the CPU to decompress these large blocks and the Disk to fetch much larger pages.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ol start=&#34;29&#34;&gt;
+&lt;li&gt;Final Implementation Checklist (Postgres 17.7)&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;Now that you have pgcrypto installed and the function tested, follow these steps to move your agent, user, and topic tables to the new standard:&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)</title>
+      <link>http://localhost:1313/posts/drafts/part3-index-introduction/</link>
+      <pubDate>Sun, 22 Mar 2026 05:55:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/drafts/part3-index-introduction/</guid>
+      <description>&lt;h2 id=&#34;16-visualizing-the-freed-up-space&#34;&gt;16. Visualizing the &amp;ldquo;Freed Up&amp;rdquo; Space&lt;/h2&gt;
+&lt;p&gt;Let&amp;rsquo;s visualize a row of pointers inside our 8 KB Page. By shrinking each &amp;ldquo;seat&amp;rdquo; from 8 bytes to 6 bytes, we allow the next pointer to start sooner.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Scenario A: 8-byte Pointers&lt;/strong&gt;
+&lt;code&gt;[Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes]&lt;/code&gt;
+&lt;em&gt;Total used for 3 pointers: 24 bytes.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Scenario B: 6-byte Pointers&lt;/strong&gt;
+&lt;code&gt;[Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes]&lt;/code&gt;
+&lt;em&gt;Total used for 4 pointers: 24 bytes.&lt;/em&gt;&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)</title>
+      <link>http://localhost:1313/posts/drafts/part2-index-introduction/</link>
+      <pubDate>Sun, 15 Mar 2026 05:55:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/drafts/part2-index-introduction/</guid>
+      <description>&lt;h2 id=&#34;6-the-handshake-why-os-and-database-page-sizes-differ&#34;&gt;6. The &amp;ldquo;Handshake&amp;rdquo;: Why OS and Database Page Sizes Differ&lt;/h2&gt;
+&lt;p&gt;When you run &lt;code&gt;getconf PAGESIZE&lt;/code&gt; on Ubuntu, you see &lt;code&gt;4096&lt;/code&gt; (4 KB). Yet, your database often uses &lt;strong&gt;8 KB&lt;/strong&gt; or &lt;strong&gt;16 KB&lt;/strong&gt;. If the RAM can process data quickly, why is there this mismatch?&lt;/p&gt;
+&lt;h3 id=&#34;the-generalist-ubuntu-vs-the-specialist-database&#34;&gt;The Generalist (Ubuntu) vs. The Specialist (Database)&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Ubuntu (4 KB):&lt;/strong&gt; An Operating System is a generalist. It manages everything from tiny config files to massive videos. If the OS used 16 KB pages, a 1 KB text file would still take up 16 KB of RAM—wasting 94% of that space. 4 KB is the &amp;ldquo;Goldilocks&amp;rdquo; size for general computing.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Database (8 KB+):&lt;/strong&gt; A database is a specialist. It knows its files are massive. By using a larger &lt;strong&gt;Logical Page&lt;/strong&gt;, it increases &lt;strong&gt;Fan-out&lt;/strong&gt; (the number of pointers per page). This keeps the B-Tree &amp;ldquo;short and fat&amp;rdquo; rather than &amp;ldquo;tall and skinny,&amp;rdquo; reducing the number of disk reads.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id=&#34;how-they-sync&#34;&gt;How They Sync&lt;/h3&gt;
+&lt;p&gt;There is no &amp;ldquo;clash&amp;rdquo; because these sizes are multiples. When the Database asks for one 8 KB page, Ubuntu simply fetches &lt;strong&gt;two&lt;/strong&gt; 4 KB hardware blocks.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Part 1 - Deep Dive: How Database Indexing Works (The B-Tree)</title>
+      <link>http://localhost:1313/posts/drafts/part1-index-introduction/</link>
+      <pubDate>Sun, 08 Mar 2026 05:55:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/drafts/part1-index-introduction/</guid>
+      <description>&lt;h2 id=&#34;the-fundamental-problem-the-full-table-scan&#34;&gt;The Fundamental Problem: The Full Table Scan&lt;/h2&gt;
+&lt;p&gt;Imagine a table with 10 million rows. To find a specific ID without an index, the database must perform a &lt;strong&gt;Full Table Scan&lt;/strong&gt;—checking every single row from 1 to 10,000,000. This is $O(n)$ complexity.&lt;/p&gt;
+&lt;p&gt;Indexing transforms this into a &amp;ldquo;search in a book&amp;rdquo; experience using a data structure called a &lt;strong&gt;B-Tree&lt;/strong&gt;.&lt;/p&gt;
+&lt;hr&gt;
+&lt;h2 id=&#34;1-what-is-an-index&#34;&gt;1. What is an Index?&lt;/h2&gt;
+&lt;p&gt;At its core, an index is a separate, sorted data structure that maps a specific value (like an ID or Name) to a &lt;strong&gt;Pointer&lt;/strong&gt; (the physical address of the row on disk).&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>

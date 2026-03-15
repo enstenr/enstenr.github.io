@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en" dir="auto" data-theme="auto">
+
+<head><script src="/livereload.js?mindelay=10&amp;v=2&amp;port=1313&amp;path=livereload" data-no-instant defer></script><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="index, follow">
+<title>Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) | Beyond the Bytes</title>
+<meta name="keywords" content="Databases, Performance, Computer Science">
+<meta name="description" content="16. Visualizing the &ldquo;Freed Up&rdquo; Space
+Let&rsquo;s visualize a row of pointers inside our 8 KB Page. By shrinking each &ldquo;seat&rdquo; from 8 bytes to 6 bytes, we allow the next pointer to start sooner.
+Scenario A: 8-byte Pointers
+[Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes]
+Total used for 3 pointers: 24 bytes.
+Scenario B: 6-byte Pointers
+[Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes]
+Total used for 4 pointers: 24 bytes.">
+<meta name="author" content="Rajesh Subramanian">
+<link rel="canonical" href="http://localhost:1313/posts/drafts/part3-index-introduction/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.45da07cc2f1287a2aed2f0e5d5f6a80a124756a1c1228703eebc30c546fb9f0e.css" integrity="sha256-RdoHzC8Sh6Ku0vDl1faoChJHVqHBIocD7rwwxUb7nw4=" rel="preload stylesheet" as="style">
+<link rel="icon" href="http://localhost:1313/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="http://localhost:1313/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="http://localhost:1313/favicon-32x32.png">
+<link rel="apple-touch-icon" href="http://localhost:1313/apple-touch-icon.png">
+<link rel="mask-icon" href="http://localhost:1313/safari-pinned-tab.svg">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<link rel="alternate" hreflang="en" href="http://localhost:1313/posts/drafts/part3-index-introduction/">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --theme: rgb(29, 30, 32);
+                --entry: rgb(46, 46, 51);
+                --primary: rgb(218, 218, 219);
+                --secondary: rgb(155, 156, 157);
+                --tertiary: rgb(65, 66, 68);
+                --content: rgb(196, 196, 197);
+                --code-block-bg: rgb(46, 46, 51);
+                --code-bg: rgb(55, 56, 62);
+                --border: rgb(51, 51, 51);
+                color-scheme: dark;
+            }
+
+            .list {
+                background: var(--theme);
+            }
+
+            .toc {
+                background: var(--entry);
+            }
+        }
+
+        @media (prefers-color-scheme: light) {
+            .list::-webkit-scrollbar-thumb {
+                border-color: var(--code-bg);
+            }
+        }
+
+    </style>
+</noscript>
+<script>
+    if (localStorage.getItem("pref-theme") === "dark") {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else if (localStorage.getItem("pref-theme") === "light") {
+       document.querySelector("html").dataset.theme = 'light';
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else {
+        document.querySelector("html").dataset.theme = 'light';
+    }
+
+</script><meta property="og:url" content="http://localhost:1313/posts/drafts/part3-index-introduction/">
+  <meta property="og:site_name" content="Beyond the Bytes">
+  <meta property="og:title" content="Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)">
+  <meta property="og:description" content="16. Visualizing the “Freed Up” Space Let’s visualize a row of pointers inside our 8 KB Page. By shrinking each “seat” from 8 bytes to 6 bytes, we allow the next pointer to start sooner.
+Scenario A: 8-byte Pointers [Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes] Total used for 3 pointers: 24 bytes.
+Scenario B: 6-byte Pointers [Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes] Total used for 4 pointers: 24 bytes.">
+  <meta property="og:locale" content="en-us">
+  <meta property="og:type" content="article">
+    <meta property="article:section" content="posts">
+    <meta property="article:published_time" content="2026-03-22T05:55:00+00:00">
+    <meta property="article:modified_time" content="2026-03-22T05:55:00+00:00">
+    <meta property="article:tag" content="Databases">
+    <meta property="article:tag" content="Performance">
+    <meta property="article:tag" content="Computer Science">
+      <meta property="og:see_also" content="http://localhost:1313/posts/2026/03/22/part2-index-introduction/">
+      <meta property="og:see_also" content="http://localhost:1313/posts/drafts/part4-index-introduction/">
+      <meta property="og:see_also" content="http://localhost:1313/posts/2026/03/22/part1-index-introduction/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)">
+<meta name="twitter:description" content="16. Visualizing the &ldquo;Freed Up&rdquo; Space
+Let&rsquo;s visualize a row of pointers inside our 8 KB Page. By shrinking each &ldquo;seat&rdquo; from 8 bytes to 6 bytes, we allow the next pointer to start sooner.
+Scenario A: 8-byte Pointers
+[Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes]
+Total used for 3 pointers: 24 bytes.
+Scenario B: 6-byte Pointers
+[Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes]
+Total used for 4 pointers: 24 bytes.">
+
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position":  1 ,
+      "name": "Posts",
+      "item": "http://localhost:1313/posts/"
+    }, 
+    {
+      "@type": "ListItem",
+      "position":  2 ,
+      "name": "Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)",
+      "item": "http://localhost:1313/posts/drafts/part3-index-introduction/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)",
+  "name": "Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)",
+  "description": "16. Visualizing the \u0026ldquo;Freed Up\u0026rdquo; Space Let\u0026rsquo;s visualize a row of pointers inside our 8 KB Page. By shrinking each \u0026ldquo;seat\u0026rdquo; from 8 bytes to 6 bytes, we allow the next pointer to start sooner.\nScenario A: 8-byte Pointers [Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes] Total used for 3 pointers: 24 bytes.\nScenario B: 6-byte Pointers [Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes] Total used for 4 pointers: 24 bytes.\n",
+  "keywords": [
+    "Databases", "Performance", "Computer Science"
+  ],
+  "articleBody": "16. Visualizing the “Freed Up” Space Let’s visualize a row of pointers inside our 8 KB Page. By shrinking each “seat” from 8 bytes to 6 bytes, we allow the next pointer to start sooner.\nScenario A: 8-byte Pointers [Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes] Total used for 3 pointers: 24 bytes.\nScenario B: 6-byte Pointers [Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes] Total used for 4 pointers: 24 bytes.\nThe “Free” Pointer: In the same 24 bytes of space, the 6-byte strategy fits one extra pointer. Scale this across an 8,192-byte page, and you gain roughly 137 extra entries per page.\n17. The Bottleneck Reality Why go through all this trouble to save 2 bytes? Because of the Latency Gap:\nReading from RAM: Takes ~100 nanoseconds. Reading from Disk (SSD): Takes ~100,000 nanoseconds. Reading from a disk is 1,000 times slower than reading from RAM. If saving 2 bytes per pointer allows the database to find your data in 3 disk reads instead of 4, you have saved 100,000 nanoseconds of time. In the world of database performance, we always trade CPU cycles to save Disk I/O.\nSummary Checklist for Database Indexing Logical Unit: Data is moved in 8 KB Pages. OS Unit: Ubuntu moves memory in 4 KB Pages. Pointer Size: 6 Bytes on disk (addresses up to 256 TB). Hardware Alignment: 8 Bytes in RAM (64-bit CPU standard). The Goal: Maximize Page Density to keep the B-Tree as short as possible. 18. The “Box in a Room” Analogy: Understanding Density To visualize how a database index scales, imagine a room that is exactly 8,192 square feet (our 8 KB Page). Your goal is to fit as many “Index Boxes” as possible into this room.\nEach box consists of two parts:\nThe Value: The data you are indexing (e.g., an ID or a Name). The Pointer: The 6-byte “address” telling you where the full row lives. Scenario A: The Lean Integer (4 Bytes) Box Width: 4B (Value) + 6B (Pointer) = 10 bytes. Room Capacity: $8192 / 10 = \\mathbf{819}$ boxes. The Result: High density. The database can find millions of rows in just 3 “jumps.” Scenario B: The Bulky UUID (16 Bytes) Many modern systems use UUIDs (Universally Unique Identifiers) because they are great for distributed systems. But they are “wide.”\nBox Width: 16B (Value) + 6B (Pointer) = 22 bytes. Room Capacity: $8192 / 22 \\approx \\mathbf{372}$ boxes. The Result: Your capacity has dropped by over 50%. 19. The “Multiplier Effect” of Fan-out Why does it matter if we have 819 boxes versus 372? It’s because of Fan-out. Every “box” in the Root node points to a whole new page.\nLook at how the total capacity of a 2-level tree changes based on box size:\nBox Size Pointers per Page Total Rows Found (2 Levels) 10 Bytes (Integer) 819 $819 \\times 819 = \\mathbf{670,761}$ 22 Bytes (UUID) 372 $372 \\times 372 = \\mathbf{138,384}$ The Deep Insight: By choosing a wider data type (like UUID or a long String), your index becomes less efficient. The tree grows taller, requiring more “jumps” to the disk.\nIn computer time:\n3 Jumps: Fast (likely fits in RAM). 5 Jumps: Slower (requires more trips to the physical SSD). 20. Conclusion: The Deep Planner’s Rules for Indexing After diving deep into the hardware, the OS, and the math, we can summarize the “laws” of database performance:\nThe 8 KB Page is Fixed: Ubuntu always moves 4 KB blocks, and the database always groups them into 8 KB logical units. We cannot change the “room” size, only how we pack it. Pointer Size is a Trade-off: We use 6-byte pointers instead of 8-byte pointers to lower the “denominator” and increase density. Data Width is King: Small data types (Integers) make for “fat, short” trees that are incredibly fast. Large data types (UUIDs, Strings) make for “skinny, tall” trees that are slower. Disk is the Bottleneck: Every design choice—from the 6-byte pointer to the 8 KB page—is made to avoid “Disk I/O.” Reading from an SSD is 1,000x slower than reading from RAM. Final Pro-Tip: When designing a database, always choose the smallest data type that safely fits your data. You aren’t just saving disk space; you are increasing the “Fan-out” of your index and making your entire application faster.\n21. The Chaos of the “Page Split” What happens when our 8 KB “room” is perfectly packed with 819 boxes, and we try to shove one more inside? The database cannot simply “push” the other boxes; that would be too slow. Instead, it performs a Page Split.\nHow a Page Split Works: Allocation: The DB creates a brand new, empty 8 KB page. The 50/50 Rule: It moves the bottom 50% of the entries from the full page into the new page. Insertion: It drops the new ID into the now-available space. The Link: It updates the “Parent” node to point to this new child page. The Performance Hit: While a SELECT only reads data, an INSERT that triggers a split must write two new pages to the disk and update the index hierarchy. This is why “heavy” indexing makes writes slower.\n22. Case Study: The UUID Performance Trap If you use Random UUIDs (v4) as primary keys in PostgreSQL, you are likely hitting a performance wall. Based on our “Deep Planning” math, here is why:\n1. The “Width” Problem A UUID is 16 bytes, whereas a standard Integer is 4 bytes.\nInteger Index: ~819 entries per page. UUID Index: ~372 entries per page. Result: Your index is 2x larger and the tree is taller, requiring more Disk I/O. 2. The “Locality” Problem (Fragmentation) Sequential IDs (1, 2, 3…): These always land at the “Right-Hand Edge” of the tree. The old pages stay perfectly packed and the DB only works on the last page. Random UUIDs (A, Z, B…): These land in the middle of random pages. This triggers constant Page Splits across the entire index, leaving your pages half-empty (fragmented). 3. The RAM Exhaustion Because random UUIDs can land anywhere, PostgreSQL must keep the entire index in RAM (the Buffer Pool) to stay fast. Once your UUID index grows larger than your available RAM, performance “falls off a cliff” as every single insert starts requiring a slow Disk Read.\n23. The Modern Solution: UUID v7 If you need the uniqueness of a UUID but the speed of an Integer, use UUID v7.\nThe Secret: The first 48 bits of a UUID v7 are a Timestamp. The Benefit: They are “Time-Ordered.” To the database, they behave like an Auto-Incrementing Integer, always landing at the end of the index and preventing chaotic Page Splits. Final Post Summary: The Deep Planner’s Checklist Feature The Goal The “Deep” Reason Page Size 8 KB Matches the OS (2x 4KB) while maximizing pointer density. Pointer Size 6 Bytes Large enough for 256TB, small enough to fit ~20% more data. Key Type Sequential Prevents Page Splits and keeps index pages “hot” in RAM. Data Width Small Maximizes Fan-out, keeping the search tree short and fast. 24. The Diagnosis: My PostgreSQL uses UUID v4 If you find that your primary keys are UUID v4, your database is currently playing a game of “Random Roulette” with your storage.\nThe Problem: Randomness vs. The 8 KB Page Every time you insert a new UUID v4, PostgreSQL picks a random page in your index.\nIf the page is full: It triggers a Page Split, moving 4 KB of data to make room for one 16-byte ID. If the page is in RAM: Great! If the page is on Disk: The database must “seek” a random location on your SSD, which is much slower than reading sequential data. 25. The Solution: Transitioning to UUID v7 You don’t need to rebuild your entire database to fix this. You can start “healing” the index today by switching new inserts to UUID v7.\nWhy UUID v7 Wins A UUID v7 looks exactly like a v4 (128 bits), but the first 48 bits are a Timestamp.\nTo the User: It looks like a random string. To the B-Tree: It behaves like a sequence. Because the timestamps always increase, new IDs always land on the “Right-Hand Edge” of the tree, filling up the 8 KB pages perfectly and ending the cycle of random Page Splits. Step-by-Step Implementation in PostgreSQL 1. Create the Generator Since native support for v7 is coming in PostgreSQL 18, we can use a PL/pgSQL function to generate them now:\n1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS uuid AS $$ DECLARE unix_ts_ms bytea; uuid_bytes bytea; BEGIN -- 1. Get current timestamp in milliseconds (48 bits) unix_ts_ms := decode(lpad(to_hex(floor(extract(epoch from clock_timestamp()) * 1000)::bigint), 12, '0'), 'hex'); -- 2. Generate random bytes for the rest uuid_bytes := unix_ts_ms || gen_random_bytes(10); -- 3. Set version (7) and variant bits uuid_bytes := set_byte(uuid_bytes, 6, (get_byte(uuid_bytes, 6) \u0026 15) | 112); uuid_bytes := set_byte(uuid_bytes, 8, (get_byte(uuid_bytes, 8) \u0026 63) | 128); RETURN encode(uuid_bytes, 'hex')::uuid; END; $$ LANGUAGE plpgsql VOLATILE; The Final Result: A Balanced Ecosystem By understanding the interaction between the 48-bit pointer, the 8 KB Database Page, and the 4 KB OS block, we have moved from a fragmented, slow index to a high-density, sequential one.\nDensity: We fit the maximum number of entries per page. Locality: We keep related data physically close on the disk. Performance: We minimize Disk I/O, ensuring our 64-bit CPU spent more time processing and less time waiting for the \"slow\" storage. Final Note: If you want to \"clean up\" the mess left behind by old UUID v4s, run REINDEX TABLE your_table_name; during a maintenance window. This will repack all those 8 KB pages with maximum density. ## 27. Fixing the Ambiguous Join \u0026 Bloat Analysis When querying PostgreSQL system catalogs, columns like indexrelid appear in multiple tables. You must use Aliases (e.g., s. or i.) to tell Postgres exactly which table to look at.\nThe Corrected Bloat \u0026 Density Query Run this to see how your 8 KB pages are actually performing:\n1 2 3 4 5 6 7 8 9 10 11 12 SELECT s.schemaname, s.relname AS tablename, s.indexrelname, -- Estimated density: Ratio of used space vs the 8KB page limit round((c.reltuples * 12 / 8192.0), 2) AS density_score, pg_size_pretty(pg_relation_size(s.indexrelid)) AS index_size, pg_relation_size(s.indexrelid) / 8192 AS total_8kb_pages FROM pg_stat_user_indexes s JOIN pg_class c ON s.indexrelid = c.oid JOIN pg_index i ON s.indexrelid = i.indexrelid WHERE s.idx_scan \u003e 0; ",
+  "wordCount" : "1764",
+  "inLanguage": "en",
+  "datePublished": "2026-03-22T05:55:00Z",
+  "dateModified": "2026-03-22T05:55:00Z",
+  "author":{
+    "@type": "Person",
+    "name": "Rajesh Subramanian"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "http://localhost:1313/posts/drafts/part3-index-introduction/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Beyond the Bytes",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "http://localhost:1313/favicon.ico"
+    }
+  }
+}
+</script>
+</head>
+<body id="top">
+    <header class="header">
+    <nav class="nav">
+        <div class="logo">
+            <a href="http://localhost:1313/" accesskey="h" title="Beyond the Bytes (Alt + H)">Beyond the Bytes</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu">
+            <li>
+                <a href="http://localhost:1313/about/" title="About">
+                    <span>About</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/journey" title="My Journey">
+                    <span>My Journey</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/posts/" title="Articles">
+                    <span>Articles</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/search/" title="Search (Alt &#43; /)" accesskey=/>
+                    <span>Search</span>
+                </a>
+            </li>
+            <li>
+                <a href="http://localhost:1313/categories/" title="Categories">
+                    <span>Categories</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    
+    <h1 class="post-title entry-hint-parent">
+      Part 3 - Deep Dive: How Database Indexing Works (The B-Tree)
+    </h1>
+    <div class="post-meta"><span title='2026-03-22 05:55:00 +0000 UTC'>March 22, 2026</span>&nbsp;·&nbsp;<span>9 min</span>&nbsp;·&nbsp;<span>1764 words</span>&nbsp;·&nbsp;<span>Rajesh Subramanian</span>
+
+</div>
+  </header> <div class="toc">
+    <details  open>
+        <summary accesskey="c" title="(Alt + C)">
+            <span class="details">Table of Contents</span>
+        </summary>
+
+        <div class="inner"><ul>
+                <li>
+                    <a href="#16-visualizing-the-freed-up-space" aria-label="16. Visualizing the &ldquo;Freed Up&rdquo; Space">16. Visualizing the &ldquo;Freed Up&rdquo; Space</a></li>
+                <li>
+                    <a href="#17-the-bottleneck-reality" aria-label="17. The Bottleneck Reality">17. The Bottleneck Reality</a><ul>
+                        
+                <li>
+                    <a href="#summary-checklist-for-database-indexing" aria-label="Summary Checklist for Database Indexing">Summary Checklist for Database Indexing</a></li></ul>
+                </li>
+                <li>
+                    <a href="#18-the-box-in-a-room-analogy-understanding-density" aria-label="18. The &ldquo;Box in a Room&rdquo; Analogy: Understanding Density">18. The &ldquo;Box in a Room&rdquo; Analogy: Understanding Density</a><ul>
+                        
+                <li>
+                    <a href="#scenario-a-the-lean-integer-4-bytes" aria-label="Scenario A: The Lean Integer (4 Bytes)">Scenario A: The Lean Integer (4 Bytes)</a></li>
+                <li>
+                    <a href="#scenario-b-the-bulky-uuid-16-bytes" aria-label="Scenario B: The Bulky UUID (16 Bytes)">Scenario B: The Bulky UUID (16 Bytes)</a></li></ul>
+                </li>
+                <li>
+                    <a href="#19-the-multiplier-effect-of-fan-out" aria-label="19. The &ldquo;Multiplier Effect&rdquo; of Fan-out">19. The &ldquo;Multiplier Effect&rdquo; of Fan-out</a></li>
+                <li>
+                    <a href="#20-conclusion-the-deep-planners-rules-for-indexing" aria-label="20. Conclusion: The Deep Planner&rsquo;s Rules for Indexing">20. Conclusion: The Deep Planner&rsquo;s Rules for Indexing</a></li>
+                <li>
+                    <a href="#21-the-chaos-of-the-page-split" aria-label="21. The Chaos of the &ldquo;Page Split&rdquo;">21. The Chaos of the &ldquo;Page Split&rdquo;</a><ul>
+                        
+                <li>
+                    <a href="#how-a-page-split-works" aria-label="How a Page Split Works:">How a Page Split Works:</a></li></ul>
+                </li>
+                <li>
+                    <a href="#22-case-study-the-uuid-performance-trap" aria-label="22. Case Study: The UUID Performance Trap">22. Case Study: The UUID Performance Trap</a><ul>
+                        
+                <li>
+                    <a href="#1-the-width-problem" aria-label="1. The &ldquo;Width&rdquo; Problem">1. The &ldquo;Width&rdquo; Problem</a></li>
+                <li>
+                    <a href="#2-the-locality-problem-fragmentation" aria-label="2. The &ldquo;Locality&rdquo; Problem (Fragmentation)">2. The &ldquo;Locality&rdquo; Problem (Fragmentation)</a></li>
+                <li>
+                    <a href="#3-the-ram-exhaustion" aria-label="3. The RAM Exhaustion">3. The RAM Exhaustion</a></li></ul>
+                </li>
+                <li>
+                    <a href="#23-the-modern-solution-uuid-v7" aria-label="23. The Modern Solution: UUID v7">23. The Modern Solution: UUID v7</a></li>
+                <li>
+                    <a href="#final-post-summary-the-deep-planners-checklist" aria-label="Final Post Summary: The Deep Planner&rsquo;s Checklist">Final Post Summary: The Deep Planner&rsquo;s Checklist</a></li>
+                <li>
+                    <a href="#24-the-diagnosis-my-postgresql-uses-uuid-v4" aria-label="24. The Diagnosis: My PostgreSQL uses UUID v4">24. The Diagnosis: My PostgreSQL uses UUID v4</a><ul>
+                        
+                <li>
+                    <a href="#the-problem-randomness-vs-the-8-kb-page" aria-label="The Problem: Randomness vs. The 8 KB Page">The Problem: Randomness vs. The 8 KB Page</a></li></ul>
+                </li>
+                <li>
+                    <a href="#25-the-solution-transitioning-to-uuid-v7" aria-label="25. The Solution: Transitioning to UUID v7">25. The Solution: Transitioning to UUID v7</a><ul>
+                        
+                <li>
+                    <a href="#why-uuid-v7-wins" aria-label="Why UUID v7 Wins">Why UUID v7 Wins</a></li>
+                <li>
+                    <a href="#step-by-step-implementation-in-postgresql" aria-label="Step-by-Step Implementation in PostgreSQL">Step-by-Step Implementation in PostgreSQL</a><ul>
+                        
+                <li>
+                    <a href="#1-create-the-generator" aria-label="1. Create the Generator">1. Create the Generator</a></li></ul>
+                </li>
+                <li>
+                    <a href="#the-corrected-bloat--density-query" aria-label="The Corrected Bloat &amp; Density Query">The Corrected Bloat &amp; Density Query</a>
+                </li>
+            </ul>
+            </li>
+            </ul>
+        </div>
+    </details>
+</div>
+
+  <aside class="series-box" style="padding: 15px; border: 1px solid var(--border); border-radius: 8px; margin: 20px 0; background: var(--tertiary);">
+    <h4 style="margin-top: 0;">📚 Part of the <em>Introduction to Index</em> series</h4>
+    <ul style="margin-bottom: 0; list-style: none; padding-left: 10px;"><li style="margin-bottom: 5px;"><a href="http://localhost:1313/posts/2026/03/22/part1-index-introduction/" style="text-decoration: none; color: var(--primary);">Part 1 - Deep Dive: How Database Indexing Works (The B-Tree)</a></li><li style="margin-bottom: 5px;"><span style="color: var(--secondary); font-weight: bold;">👉 Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) (Current)</span></li><li style="margin-bottom: 5px;"><a href="http://localhost:1313/posts/2026/03/22/part2-index-introduction/" style="text-decoration: none; color: var(--primary);">Part 2 - Deep Dive: How Database Indexing Works (The B-Tree)</a></li><li style="margin-bottom: 5px;"><a href="http://localhost:1313/posts/drafts/part4-index-introduction/" style="text-decoration: none; color: var(--primary);">Part 4 - Deep Dive: How Database Indexing Works (The B-Tree)</a></li></ul>
+</aside>
+  <div class="post-content"><h2 id="16-visualizing-the-freed-up-space">16. Visualizing the &ldquo;Freed Up&rdquo; Space<a hidden class="anchor" aria-hidden="true" href="#16-visualizing-the-freed-up-space">#</a></h2>
+<p>Let&rsquo;s visualize a row of pointers inside our 8 KB Page. By shrinking each &ldquo;seat&rdquo; from 8 bytes to 6 bytes, we allow the next pointer to start sooner.</p>
+<p><strong>Scenario A: 8-byte Pointers</strong>
+<code>[Ptr 1: 8 bytes] [Ptr 2: 8 bytes] [Ptr 3: 8 bytes]</code>
+<em>Total used for 3 pointers: 24 bytes.</em></p>
+<p><strong>Scenario B: 6-byte Pointers</strong>
+<code>[Ptr 1: 6 bytes] [Ptr 2: 6 bytes] [Ptr 3: 6 bytes] [Ptr 4: 6 bytes]</code>
+<em>Total used for 4 pointers: 24 bytes.</em></p>
+<p><strong>The &ldquo;Free&rdquo; Pointer:</strong> In the same 24 bytes of space, the 6-byte strategy fits <strong>one extra pointer</strong>. Scale this across an 8,192-byte page, and you gain roughly <strong>137 extra entries</strong> per page.</p>
+<hr>
+<h2 id="17-the-bottleneck-reality">17. The Bottleneck Reality<a hidden class="anchor" aria-hidden="true" href="#17-the-bottleneck-reality">#</a></h2>
+<p>Why go through all this trouble to save 2 bytes? Because of the <strong>Latency Gap</strong>:</p>
+<ul>
+<li><strong>Reading from RAM:</strong> Takes ~100 nanoseconds.</li>
+<li><strong>Reading from Disk (SSD):</strong> Takes ~100,000 nanoseconds.</li>
+</ul>
+<p>Reading from a disk is <strong>1,000 times slower</strong> than reading from RAM. If saving 2 bytes per pointer allows the database to find your data in 3 disk reads instead of 4, you have saved 100,000 nanoseconds of time. In the world of database performance, <strong>we always trade CPU cycles to save Disk I/O.</strong></p>
+<hr>
+<h3 id="summary-checklist-for-database-indexing">Summary Checklist for Database Indexing<a hidden class="anchor" aria-hidden="true" href="#summary-checklist-for-database-indexing">#</a></h3>
+<ol>
+<li><strong>Logical Unit:</strong> Data is moved in <strong>8 KB Pages</strong>.</li>
+<li><strong>OS Unit:</strong> Ubuntu moves memory in <strong>4 KB Pages</strong>.</li>
+<li><strong>Pointer Size:</strong> <strong>6 Bytes</strong> on disk (addresses up to 256 TB).</li>
+<li><strong>Hardware Alignment:</strong> <strong>8 Bytes</strong> in RAM (64-bit CPU standard).</li>
+<li><strong>The Goal:</strong> Maximize <strong>Page Density</strong> to keep the B-Tree as short as possible.</li>
+</ol>
+<h2 id="18-the-box-in-a-room-analogy-understanding-density">18. The &ldquo;Box in a Room&rdquo; Analogy: Understanding Density<a hidden class="anchor" aria-hidden="true" href="#18-the-box-in-a-room-analogy-understanding-density">#</a></h2>
+<p>To visualize how a database index scales, imagine a room that is exactly <strong>8,192 square feet</strong> (our 8 KB Page). Your goal is to fit as many &ldquo;Index Boxes&rdquo; as possible into this room.</p>
+<p>Each box consists of two parts:</p>
+<ol>
+<li><strong>The Value:</strong> The data you are indexing (e.g., an ID or a Name).</li>
+<li><strong>The Pointer:</strong> The 6-byte &ldquo;address&rdquo; telling you where the full row lives.</li>
+</ol>
+<h3 id="scenario-a-the-lean-integer-4-bytes">Scenario A: The Lean Integer (4 Bytes)<a hidden class="anchor" aria-hidden="true" href="#scenario-a-the-lean-integer-4-bytes">#</a></h3>
+<ul>
+<li><strong>Box Width:</strong> 4B (Value) + 6B (Pointer) = <strong>10 bytes</strong>.</li>
+<li><strong>Room Capacity:</strong> $8192 / 10 = \mathbf{819}$ <strong>boxes</strong>.</li>
+<li><strong>The Result:</strong> High density. The database can find millions of rows in just 3 &ldquo;jumps.&rdquo;</li>
+</ul>
+<h3 id="scenario-b-the-bulky-uuid-16-bytes">Scenario B: The Bulky UUID (16 Bytes)<a hidden class="anchor" aria-hidden="true" href="#scenario-b-the-bulky-uuid-16-bytes">#</a></h3>
+<p>Many modern systems use UUIDs (Universally Unique Identifiers) because they are great for distributed systems. But they are &ldquo;wide.&rdquo;</p>
+<ul>
+<li><strong>Box Width:</strong> 16B (Value) + 6B (Pointer) = <strong>22 bytes</strong>.</li>
+<li><strong>Room Capacity:</strong> $8192 / 22 \approx \mathbf{372}$ <strong>boxes</strong>.</li>
+<li><strong>The Result:</strong> Your capacity has dropped by <strong>over 50%</strong>.</li>
+</ul>
+<hr>
+<h2 id="19-the-multiplier-effect-of-fan-out">19. The &ldquo;Multiplier Effect&rdquo; of Fan-out<a hidden class="anchor" aria-hidden="true" href="#19-the-multiplier-effect-of-fan-out">#</a></h2>
+<p>Why does it matter if we have 819 boxes versus 372? It’s because of <strong>Fan-out</strong>. Every &ldquo;box&rdquo; in the Root node points to a whole new page.</p>
+<p>Look at how the total capacity of a 2-level tree changes based on box size:</p>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Box Size</th>
+          <th style="text-align: left">Pointers per Page</th>
+          <th style="text-align: left">Total Rows Found (2 Levels)</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>10 Bytes (Integer)</strong></td>
+          <td style="text-align: left">819</td>
+          <td style="text-align: left">$819 \times 819 = \mathbf{670,761}$</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>22 Bytes (UUID)</strong></td>
+          <td style="text-align: left">372</td>
+          <td style="text-align: left">$372 \times 372 = \mathbf{138,384}$</td>
+      </tr>
+  </tbody>
+</table>
+<p><strong>The Deep Insight:</strong> By choosing a wider data type (like UUID or a long String), your index becomes less efficient. The tree grows <strong>taller</strong>, requiring more &ldquo;jumps&rdquo; to the disk.</p>
+<p>In computer time:</p>
+<ul>
+<li><strong>3 Jumps:</strong> Fast (likely fits in RAM).</li>
+<li><strong>5 Jumps:</strong> Slower (requires more trips to the physical SSD).</li>
+</ul>
+<hr>
+<h2 id="20-conclusion-the-deep-planners-rules-for-indexing">20. Conclusion: The Deep Planner&rsquo;s Rules for Indexing<a hidden class="anchor" aria-hidden="true" href="#20-conclusion-the-deep-planners-rules-for-indexing">#</a></h2>
+<p>After diving deep into the hardware, the OS, and the math, we can summarize the &ldquo;laws&rdquo; of database performance:</p>
+<ol>
+<li><strong>The 8 KB Page is Fixed:</strong> Ubuntu always moves 4 KB blocks, and the database always groups them into 8 KB logical units. We cannot change the &ldquo;room&rdquo; size, only how we pack it.</li>
+<li><strong>Pointer Size is a Trade-off:</strong> We use <strong>6-byte pointers</strong> instead of <strong>8-byte pointers</strong> to lower the &ldquo;denominator&rdquo; and increase density.</li>
+<li><strong>Data Width is King:</strong> Small data types (Integers) make for &ldquo;fat, short&rdquo; trees that are incredibly fast. Large data types (UUIDs, Strings) make for &ldquo;skinny, tall&rdquo; trees that are slower.</li>
+<li><strong>Disk is the Bottleneck:</strong> Every design choice—from the 6-byte pointer to the 8 KB page—is made to avoid &ldquo;Disk I/O.&rdquo; Reading from an SSD is <strong>1,000x slower</strong> than reading from RAM.</li>
+</ol>
+<blockquote>
+<p><strong>Final Pro-Tip:</strong> When designing a database, always choose the smallest data type that safely fits your data. You aren&rsquo;t just saving disk space; you are increasing the &ldquo;Fan-out&rdquo; of your index and making your entire application faster.</p>
+</blockquote>
+<h2 id="21-the-chaos-of-the-page-split">21. The Chaos of the &ldquo;Page Split&rdquo;<a hidden class="anchor" aria-hidden="true" href="#21-the-chaos-of-the-page-split">#</a></h2>
+<p>What happens when our 8 KB &ldquo;room&rdquo; is perfectly packed with 819 boxes, and we try to shove one more inside? The database cannot simply &ldquo;push&rdquo; the other boxes; that would be too slow. Instead, it performs a <strong>Page Split</strong>.</p>
+<h3 id="how-a-page-split-works">How a Page Split Works:<a hidden class="anchor" aria-hidden="true" href="#how-a-page-split-works">#</a></h3>
+<ol>
+<li><strong>Allocation:</strong> The DB creates a brand new, empty 8 KB page.</li>
+<li><strong>The 50/50 Rule:</strong> It moves the bottom 50% of the entries from the full page into the new page.</li>
+<li><strong>Insertion:</strong> It drops the new ID into the now-available space.</li>
+<li><strong>The Link:</strong> It updates the &ldquo;Parent&rdquo; node to point to this new child page.</li>
+</ol>
+<p><strong>The Performance Hit:</strong> While a <code>SELECT</code> only reads data, an <code>INSERT</code> that triggers a split must write <strong>two</strong> new pages to the disk and update the index hierarchy. This is why &ldquo;heavy&rdquo; indexing makes writes slower.</p>
+<hr>
+<h2 id="22-case-study-the-uuid-performance-trap">22. Case Study: The UUID Performance Trap<a hidden class="anchor" aria-hidden="true" href="#22-case-study-the-uuid-performance-trap">#</a></h2>
+<p>If you use <strong>Random UUIDs (v4)</strong> as primary keys in PostgreSQL, you are likely hitting a performance wall. Based on our &ldquo;Deep Planning&rdquo; math, here is why:</p>
+<h3 id="1-the-width-problem">1. The &ldquo;Width&rdquo; Problem<a hidden class="anchor" aria-hidden="true" href="#1-the-width-problem">#</a></h3>
+<p>A UUID is <strong>16 bytes</strong>, whereas a standard Integer is <strong>4 bytes</strong>.</p>
+<ul>
+<li><strong>Integer Index:</strong> ~819 entries per page.</li>
+<li><strong>UUID Index:</strong> ~372 entries per page.</li>
+<li><strong>Result:</strong> Your index is <strong>2x larger</strong> and the tree is <strong>taller</strong>, requiring more Disk I/O.</li>
+</ul>
+<h3 id="2-the-locality-problem-fragmentation">2. The &ldquo;Locality&rdquo; Problem (Fragmentation)<a hidden class="anchor" aria-hidden="true" href="#2-the-locality-problem-fragmentation">#</a></h3>
+<ul>
+<li><strong>Sequential IDs (1, 2, 3&hellip;):</strong> These always land at the &ldquo;Right-Hand Edge&rdquo; of the tree. The old pages stay perfectly packed and the DB only works on the last page.</li>
+<li><strong>Random UUIDs (A, Z, B&hellip;):</strong> These land in the <strong>middle</strong> of random pages. This triggers constant Page Splits across the entire index, leaving your pages half-empty (fragmented).</li>
+</ul>
+<h3 id="3-the-ram-exhaustion">3. The RAM Exhaustion<a hidden class="anchor" aria-hidden="true" href="#3-the-ram-exhaustion">#</a></h3>
+<p>Because random UUIDs can land anywhere, PostgreSQL must keep the <strong>entire index</strong> in RAM (the Buffer Pool) to stay fast. Once your UUID index grows larger than your available RAM, performance &ldquo;falls off a cliff&rdquo; as every single insert starts requiring a slow Disk Read.</p>
+<hr>
+<h2 id="23-the-modern-solution-uuid-v7">23. The Modern Solution: UUID v7<a hidden class="anchor" aria-hidden="true" href="#23-the-modern-solution-uuid-v7">#</a></h2>
+<p>If you need the uniqueness of a UUID but the speed of an Integer, use <strong>UUID v7</strong>.</p>
+<ul>
+<li><strong>The Secret:</strong> The first 48 bits of a UUID v7 are a <strong>Timestamp</strong>.</li>
+<li><strong>The Benefit:</strong> They are &ldquo;Time-Ordered.&rdquo; To the database, they behave like an Auto-Incrementing Integer, always landing at the end of the index and preventing chaotic Page Splits.</li>
+</ul>
+<hr>
+<h2 id="final-post-summary-the-deep-planners-checklist">Final Post Summary: The Deep Planner&rsquo;s Checklist<a hidden class="anchor" aria-hidden="true" href="#final-post-summary-the-deep-planners-checklist">#</a></h2>
+<table>
+  <thead>
+      <tr>
+          <th style="text-align: left">Feature</th>
+          <th style="text-align: left">The Goal</th>
+          <th style="text-align: left">The &ldquo;Deep&rdquo; Reason</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td style="text-align: left"><strong>Page Size</strong></td>
+          <td style="text-align: left">8 KB</td>
+          <td style="text-align: left">Matches the OS (2x 4KB) while maximizing pointer density.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Pointer Size</strong></td>
+          <td style="text-align: left">6 Bytes</td>
+          <td style="text-align: left">Large enough for 256TB, small enough to fit ~20% more data.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Key Type</strong></td>
+          <td style="text-align: left">Sequential</td>
+          <td style="text-align: left">Prevents <strong>Page Splits</strong> and keeps index pages &ldquo;hot&rdquo; in RAM.</td>
+      </tr>
+      <tr>
+          <td style="text-align: left"><strong>Data Width</strong></td>
+          <td style="text-align: left">Small</td>
+          <td style="text-align: left">Maximizes <strong>Fan-out</strong>, keeping the search tree short and fast.</td>
+      </tr>
+  </tbody>
+</table>
+<h2 id="24-the-diagnosis-my-postgresql-uses-uuid-v4">24. The Diagnosis: My PostgreSQL uses UUID v4<a hidden class="anchor" aria-hidden="true" href="#24-the-diagnosis-my-postgresql-uses-uuid-v4">#</a></h2>
+<p>If you find that your primary keys are <strong>UUID v4</strong>, your database is currently playing a game of &ldquo;Random Roulette&rdquo; with your storage.</p>
+<h3 id="the-problem-randomness-vs-the-8-kb-page">The Problem: Randomness vs. The 8 KB Page<a hidden class="anchor" aria-hidden="true" href="#the-problem-randomness-vs-the-8-kb-page">#</a></h3>
+<p>Every time you insert a new UUID v4, PostgreSQL picks a random page in your index.</p>
+<ul>
+<li><strong>If the page is full:</strong> It triggers a <strong>Page Split</strong>, moving 4 KB of data to make room for one 16-byte ID.</li>
+<li><strong>If the page is in RAM:</strong> Great!</li>
+<li><strong>If the page is on Disk:</strong> The database must &ldquo;seek&rdquo; a random location on your SSD, which is much slower than reading sequential data.</li>
+</ul>
+<hr>
+<h2 id="25-the-solution-transitioning-to-uuid-v7">25. The Solution: Transitioning to UUID v7<a hidden class="anchor" aria-hidden="true" href="#25-the-solution-transitioning-to-uuid-v7">#</a></h2>
+<p>You don&rsquo;t need to rebuild your entire database to fix this. You can start &ldquo;healing&rdquo; the index today by switching new inserts to <strong>UUID v7</strong>.</p>
+<h3 id="why-uuid-v7-wins">Why UUID v7 Wins<a hidden class="anchor" aria-hidden="true" href="#why-uuid-v7-wins">#</a></h3>
+<p>A UUID v7 looks exactly like a v4 (128 bits), but the first 48 bits are a <strong>Timestamp</strong>.</p>
+<ul>
+<li><strong>To the User:</strong> It looks like a random string.</li>
+<li><strong>To the B-Tree:</strong> It behaves like a sequence. Because the timestamps always increase, new IDs always land on the &ldquo;Right-Hand Edge&rdquo; of the tree, filling up the 8 KB pages perfectly and ending the cycle of random Page Splits.</li>
+</ul>
+<h3 id="step-by-step-implementation-in-postgresql">Step-by-Step Implementation in PostgreSQL<a hidden class="anchor" aria-hidden="true" href="#step-by-step-implementation-in-postgresql">#</a></h3>
+<h4 id="1-create-the-generator">1. Create the Generator<a hidden class="anchor" aria-hidden="true" href="#1-create-the-generator">#</a></h4>
+<p>Since native support for v7 is coming in PostgreSQL 18, we can use a PL/pgSQL function to generate them now:</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span><span class="lnt">13
+</span><span class="lnt">14
+</span><span class="lnt">15
+</span><span class="lnt">16
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">OR</span><span class="w"> </span><span class="k">REPLACE</span><span class="w"> </span><span class="k">FUNCTION</span><span class="w"> </span><span class="n">uuid_generate_v7</span><span class="p">()</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">RETURNS</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="err">$$</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">DECLARE</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">unix_ts_ms</span><span class="w"> </span><span class="n">bytea</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">uuid_bytes</span><span class="w"> </span><span class="n">bytea</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">BEGIN</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="c1">-- 1. Get current timestamp in milliseconds (48 bits)
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">unix_ts_ms</span><span class="w"> </span><span class="p">:</span><span class="o">=</span><span class="w"> </span><span class="n">decode</span><span class="p">(</span><span class="n">lpad</span><span class="p">(</span><span class="n">to_hex</span><span class="p">(</span><span class="n">floor</span><span class="p">(</span><span class="k">extract</span><span class="p">(</span><span class="n">epoch</span><span class="w"> </span><span class="k">from</span><span class="w"> </span><span class="n">clock_timestamp</span><span class="p">())</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="p">)::</span><span class="nb">bigint</span><span class="p">),</span><span class="w"> </span><span class="mi">12</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;0&#39;</span><span class="p">),</span><span class="w"> </span><span class="s1">&#39;hex&#39;</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="c1">-- 2. Generate random bytes for the rest
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">uuid_bytes</span><span class="w"> </span><span class="p">:</span><span class="o">=</span><span class="w"> </span><span class="n">unix_ts_ms</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">gen_random_bytes</span><span class="p">(</span><span class="mi">10</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="c1">-- 3. Set version (7) and variant bits
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">uuid_bytes</span><span class="w"> </span><span class="p">:</span><span class="o">=</span><span class="w"> </span><span class="n">set_byte</span><span class="p">(</span><span class="n">uuid_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">get_byte</span><span class="p">(</span><span class="n">uuid_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">15</span><span class="p">)</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="mi">112</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">uuid_bytes</span><span class="w"> </span><span class="p">:</span><span class="o">=</span><span class="w"> </span><span class="n">set_byte</span><span class="p">(</span><span class="n">uuid_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">get_byte</span><span class="p">(</span><span class="n">uuid_bytes</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mi">63</span><span class="p">)</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="k">RETURN</span><span class="w"> </span><span class="n">encode</span><span class="p">(</span><span class="n">uuid_bytes</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;hex&#39;</span><span class="p">)::</span><span class="n">uuid</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">END</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="err">$$</span><span class="w"> </span><span class="k">LANGUAGE</span><span class="w"> </span><span class="n">plpgsql</span><span class="w"> </span><span class="k">VOLATILE</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div><ol start="26">
+<li>The Final Result: A Balanced Ecosystem</li>
+</ol>
+<p>By understanding the interaction between the 48-bit pointer, the 8 KB Database Page, and the 4 KB OS block, we have moved from a fragmented, slow index to a high-density, sequential one.</p>
+<pre><code>Density: We fit the maximum number of entries per page.
+
+Locality: We keep related data physically close on the disk.
+
+Performance: We minimize Disk I/O, ensuring our 64-bit CPU spent more time processing and less time waiting for the &quot;slow&quot; storage.
+
+Final Note: If you want to &quot;clean up&quot; the mess left behind by old UUID v4s, run REINDEX TABLE your_table_name; during a maintenance window. This will repack all those 8 KB pages with maximum density.
+
+
+## 27. Fixing the Ambiguous Join &amp; Bloat Analysis
+</code></pre>
+<p>When querying PostgreSQL system catalogs, columns like <code>indexrelid</code> appear in multiple tables. You must use <strong>Aliases</strong> (e.g., <code>s.</code> or <code>i.</code>) to tell Postgres exactly which table to look at.</p>
+<h3 id="the-corrected-bloat--density-query">The Corrected Bloat &amp; Density Query<a hidden class="anchor" aria-hidden="true" href="#the-corrected-bloat--density-query">#</a></h3>
+<p>Run this to see how your <strong>8 KB pages</strong> are actually performing:</p>
+<div class="highlight"><div class="chroma">
+<table class="lntable"><tr><td class="lntd">
+<pre tabindex="0" class="chroma"><code><span class="lnt"> 1
+</span><span class="lnt"> 2
+</span><span class="lnt"> 3
+</span><span class="lnt"> 4
+</span><span class="lnt"> 5
+</span><span class="lnt"> 6
+</span><span class="lnt"> 7
+</span><span class="lnt"> 8
+</span><span class="lnt"> 9
+</span><span class="lnt">10
+</span><span class="lnt">11
+</span><span class="lnt">12
+</span></code></pre></td>
+<td class="lntd">
+<pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">SELECT</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">s</span><span class="p">.</span><span class="n">schemaname</span><span class="p">,</span><span class="w"> 
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">s</span><span class="p">.</span><span class="n">relname</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">tablename</span><span class="p">,</span><span class="w"> 
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">s</span><span class="p">.</span><span class="n">indexrelname</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">-- Estimated density: Ratio of used space vs the 8KB page limit
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">round</span><span class="p">((</span><span class="k">c</span><span class="p">.</span><span class="n">reltuples</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">12</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">8192</span><span class="p">.</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">density_score</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">pg_size_pretty</span><span class="p">(</span><span class="n">pg_relation_size</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">index_size</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="n">pg_relation_size</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">8192</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">total_8kb_pages</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">FROM</span><span class="w"> </span><span class="n">pg_stat_user_indexes</span><span class="w"> </span><span class="n">s</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">JOIN</span><span class="w"> </span><span class="n">pg_class</span><span class="w"> </span><span class="k">c</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">oid</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">JOIN</span><span class="w"> </span><span class="n">pg_index</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">indexrelid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="p">.</span><span class="n">indexrelid</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">WHERE</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">idx_scan</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w">
+</span></span></span></code></pre></td></tr></table>
+</div>
+</div>
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+      <li><a href="http://localhost:1313/tags/databases/">Databases</a></li>
+      <li><a href="http://localhost:1313/tags/performance/">Performance</a></li>
+      <li><a href="http://localhost:1313/tags/computer-science/">Computer Science</a></li>
+    </ul>
+<nav class="paginav">
+  <a class="prev" href="http://localhost:1313/posts/2026/03/22/part1-index-introduction/">
+    <span class="title">« Prev</span>
+    <br>
+    <span>Part 1 - Deep Dive: How Database Indexing Works (The B-Tree)</span>
+  </a>
+  <a class="next" href="http://localhost:1313/posts/2026/03/15/lombook-spring-boot/">
+    <span class="title">Next »</span>
+    <br>
+    <span>Spring Boot - Do we still need to generate getters / setters ? </span>
+  </a>
+</nav>
+
+
+<ul class="share-buttons">
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on x"
+            href="https://x.com/intent/tweet/?text=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;url=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f&amp;hashtags=Databases%2cPerformance%2cComputerScience">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M512 62.554 L 512 449.446 C 512 483.97 483.97 512 449.446 512 L 62.554 512 C 28.03 512 0 483.97 0 449.446 L 0 62.554 C 0 28.03 28.029 0 62.554 0 L 449.446 0 C 483.971 0 512 28.03 512 62.554 Z M 269.951 190.75 L 182.567 75.216 L 56 75.216 L 207.216 272.95 L 63.9 436.783 L 125.266 436.783 L 235.9 310.383 L 332.567 436.783 L 456 436.783 L 298.367 228.367 L 432.367 75.216 L 371.033 75.216 Z M 127.633 110 L 164.101 110 L 383.481 400.065 L 349.5 400.065 Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on linkedin"
+            href="https://www.linkedin.com/shareArticle?mini=true&amp;url=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f&amp;title=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;summary=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;source=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-386.892,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Zm-288.985,423.278l0,-225.717l-75.04,0l0,225.717l75.04,0Zm270.539,0l0,-129.439c0,-69.333 -37.018,-101.586 -86.381,-101.586c-39.804,0 -57.634,21.891 -67.617,37.266l0,-31.958l-75.021,0c0.995,21.181 0,225.717 0,225.717l75.02,0l0,-126.056c0,-6.748 0.486,-13.492 2.474,-18.315c5.414,-13.475 17.767,-27.434 38.494,-27.434c27.135,0 38.007,20.707 38.007,51.037l0,120.768l75.024,0Zm-307.552,-334.556c-25.674,0 -42.448,16.879 -42.448,39.002c0,21.658 16.264,39.002 41.455,39.002l0.484,0c26.165,0 42.452,-17.344 42.452,-39.002c-0.485,-22.092 -16.241,-38.954 -41.943,-39.002Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on reddit"
+            href="https://reddit.com/submit?url=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f&title=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-386.892,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Zm-3.446,265.638c0,-22.964 -18.616,-41.58 -41.58,-41.58c-11.211,0 -21.361,4.457 -28.841,11.666c-28.424,-20.508 -67.586,-33.757 -111.204,-35.278l18.941,-89.121l61.884,13.157c0.756,15.734 13.642,28.29 29.56,28.29c16.407,0 29.706,-13.299 29.706,-29.701c0,-16.403 -13.299,-29.702 -29.706,-29.702c-11.666,0 -21.657,6.792 -26.515,16.578l-69.105,-14.69c-1.922,-0.418 -3.939,-0.042 -5.585,1.036c-1.658,1.073 -2.811,2.761 -3.224,4.686l-21.152,99.438c-44.258,1.228 -84.046,14.494 -112.837,35.232c-7.468,-7.164 -17.589,-11.591 -28.757,-11.591c-22.965,0 -41.585,18.616 -41.585,41.58c0,16.896 10.095,31.41 24.568,37.918c-0.639,4.135 -0.99,8.328 -0.99,12.576c0,63.977 74.469,115.836 166.33,115.836c91.861,0 166.334,-51.859 166.334,-115.836c0,-4.218 -0.347,-8.387 -0.977,-12.493c14.564,-6.47 24.735,-21.034 24.735,-38.001Zm-119.474,108.193c-20.27,20.241 -59.115,21.816 -70.534,21.816c-11.428,0 -50.277,-1.575 -70.522,-21.82c-3.007,-3.008 -3.007,-7.882 0,-10.889c3.003,-2.999 7.882,-3.003 10.885,0c12.777,12.781 40.11,17.317 59.637,17.317c19.522,0 46.86,-4.536 59.657,-17.321c3.016,-2.999 7.886,-2.995 10.885,0.008c3.008,3.011 3.003,7.882 -0.008,10.889Zm-5.23,-48.781c-16.373,0 -29.701,-13.324 -29.701,-29.698c0,-16.381 13.328,-29.714 29.701,-29.714c16.378,0 29.706,13.333 29.706,29.714c0,16.374 -13.328,29.698 -29.706,29.698Zm-160.386,-29.702c0,-16.381 13.328,-29.71 29.714,-29.71c16.369,0 29.689,13.329 29.689,29.71c0,16.373 -13.32,29.693 -29.689,29.693c-16.386,0 -29.714,-13.32 -29.714,-29.693Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on facebook"
+            href="https://facebook.com/sharer/sharer.php?u=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-106.468,0l0,-192.915l66.6,0l12.672,-82.621l-79.272,0l0,-53.617c0,-22.603 11.073,-44.636 46.58,-44.636l36.042,0l0,-70.34c0,0 -32.71,-5.582 -63.982,-5.582c-65.288,0 -107.96,39.569 -107.96,111.204l0,62.971l-72.573,0l0,82.621l72.573,0l0,192.915l-191.104,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on whatsapp"
+            href="https://api.whatsapp.com/send?text=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29%20-%20http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f">
+            <svg version="1.1" viewBox="0 0 512 512" xml:space="preserve" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M449.446,0c34.525,0 62.554,28.03 62.554,62.554l0,386.892c0,34.524 -28.03,62.554 -62.554,62.554l-386.892,0c-34.524,0 -62.554,-28.03 -62.554,-62.554l0,-386.892c0,-34.524 28.029,-62.554 62.554,-62.554l386.892,0Zm-58.673,127.703c-33.842,-33.881 -78.847,-52.548 -126.798,-52.568c-98.799,0 -179.21,80.405 -179.249,179.234c-0.013,31.593 8.241,62.428 23.927,89.612l-25.429,92.884l95.021,-24.925c26.181,14.28 55.659,21.807 85.658,21.816l0.074,0c98.789,0 179.206,-80.413 179.247,-179.243c0.018,-47.895 -18.61,-92.93 -52.451,-126.81Zm-126.797,275.782l-0.06,0c-26.734,-0.01 -52.954,-7.193 -75.828,-20.767l-5.441,-3.229l-56.386,14.792l15.05,-54.977l-3.542,-5.637c-14.913,-23.72 -22.791,-51.136 -22.779,-79.287c0.033,-82.142 66.867,-148.971 149.046,-148.971c39.793,0.014 77.199,15.531 105.329,43.692c28.128,28.16 43.609,65.592 43.594,105.4c-0.034,82.149 -66.866,148.983 -148.983,148.984Zm81.721,-111.581c-4.479,-2.242 -26.499,-13.075 -30.604,-14.571c-4.105,-1.495 -7.091,-2.241 -10.077,2.241c-2.986,4.483 -11.569,14.572 -14.182,17.562c-2.612,2.988 -5.225,3.364 -9.703,1.12c-4.479,-2.241 -18.91,-6.97 -36.017,-22.23c-13.314,-11.876 -22.304,-26.542 -24.916,-31.026c-2.612,-4.484 -0.279,-6.908 1.963,-9.14c2.016,-2.007 4.48,-5.232 6.719,-7.847c2.24,-2.615 2.986,-4.484 4.479,-7.472c1.493,-2.99 0.747,-5.604 -0.374,-7.846c-1.119,-2.241 -10.077,-24.288 -13.809,-33.256c-3.635,-8.733 -7.327,-7.55 -10.077,-7.688c-2.609,-0.13 -5.598,-0.158 -8.583,-0.158c-2.986,0 -7.839,1.121 -11.944,5.604c-4.105,4.484 -15.675,15.32 -15.675,37.364c0,22.046 16.048,43.342 18.287,46.332c2.24,2.99 31.582,48.227 76.511,67.627c10.685,4.615 19.028,7.371 25.533,9.434c10.728,3.41 20.492,2.929 28.209,1.775c8.605,-1.285 26.499,-10.833 30.231,-21.295c3.732,-10.464 3.732,-19.431 2.612,-21.298c-1.119,-1.869 -4.105,-2.99 -8.583,-5.232Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on telegram"
+            href="https://telegram.me/share/url?text=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&amp;url=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f">
+            <svg version="1.1" xml:space="preserve" viewBox="2 2 28 28" height="30px" width="30px" fill="currentColor">
+                <path
+                    d="M26.49,29.86H5.5a3.37,3.37,0,0,1-2.47-1,3.35,3.35,0,0,1-1-2.47V5.48A3.36,3.36,0,0,1,3,3,3.37,3.37,0,0,1,5.5,2h21A3.38,3.38,0,0,1,29,3a3.36,3.36,0,0,1,1,2.46V26.37a3.35,3.35,0,0,1-1,2.47A3.38,3.38,0,0,1,26.49,29.86Zm-5.38-6.71a.79.79,0,0,0,.85-.66L24.73,9.24a.55.55,0,0,0-.18-.46.62.62,0,0,0-.41-.17q-.08,0-16.53,6.11a.59.59,0,0,0-.41.59.57.57,0,0,0,.43.52l4,1.24,1.61,4.83a.62.62,0,0,0,.63.43.56.56,0,0,0,.4-.17L16.54,20l4.09,3A.9.9,0,0,0,21.11,23.15ZM13.8,20.71l-1.21-4q8.72-5.55,8.78-5.55c.15,0,.23,0,.23.16a.18.18,0,0,1,0,.06s-2.51,2.3-7.52,6.8Z" />
+            </svg>
+        </a>
+    </li>
+    <li>
+        <a target="_blank" rel="noopener noreferrer" aria-label="share Part 3 - Deep Dive: How Database Indexing Works (The B-Tree) on ycombinator"
+            href="https://news.ycombinator.com/submitlink?t=Part%203%20-%20Deep%20Dive%3a%20How%20Database%20Indexing%20Works%20%28The%20B-Tree%29&u=http%3a%2f%2flocalhost%3a1313%2fposts%2fdrafts%2fpart3-index-introduction%2f">
+            <svg version="1.1" xml:space="preserve" width="30px" height="30px" viewBox="0 0 512 512" fill="currentColor"
+                xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">
+                <path
+                    d="M449.446 0C483.971 0 512 28.03 512 62.554L512 449.446C512 483.97 483.97 512 449.446 512L62.554 512C28.03 512 0 483.97 0 449.446L0 62.554C0 28.03 28.029 0 62.554 0L449.446 0ZM183.8767 87.9921H121.8427L230.6673 292.4508V424.0079H281.3328V292.4508L390.1575 87.9921H328.1233L256 238.2489z" />
+            </svg>
+        </a>
+    </li>
+</ul>
+
+  </footer><script src="https://giscus.app/client.js"
+        data-repo="srajesh2712/srajesh2712.github.io"
+        data-repo-id="R_kgDOOWPLLQ"
+        data-category="General"
+        data-category-id="DIC_kwDOOWPLLc4C2-RG"
+        data-mapping="pathname"
+        data-strict="0"
+        data-reactions-enabled="1"
+        data-emit-metadata="0"
+        data-input-position="bottom"
+        data-theme="preferred_color_scheme"
+        data-lang="en"
+        crossorigin="anonymous"
+        async>
+</script>
+
+</article>
+    </main>
+    
+<footer class="footer">
+        <span>&copy; 2026 <a href="http://localhost:1313/">Beyond the Bytes</a></span> · 
+
+    <span>
+        Powered by
+        <a href="https://gohugo.io/" rel="noopener noreferrer" target="_blank">Hugo</a> &
+        <a href="https://github.com/adityatelange/hugo-PaperMod/" rel="noopener" target="_blank">PaperMod</a>
+    </span>
+</footer>
+<a href="#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 6" fill="currentColor">
+        <path d="M12 6H0l6-6z" />
+    </svg>
+</a><script src="https://cdn.jsdelivr.net/npm/medium-zoom@latest/dist/medium-zoom.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const zoom = mediumZoom('.post-content img:not(.cover-image)', {
+            margin: 24,
+            background: 'var(--theme)',
+            scrollOffset: 0,
+        });
+    });
+</script>
+
+<script>
+    let menu = document.getElementById('menu');
+    if (menu) {
+        
+        const scrollPosition = localStorage.getItem("menu-scroll-position");
+        if (scrollPosition) {
+            menu.scrollLeft = parseInt(scrollPosition, 10);
+        }
+        
+        menu.onscroll = function () {
+            localStorage.setItem("menu-scroll-position", menu.scrollLeft);
+        }
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener("click", function (e) {
+            e.preventDefault();
+            var id = this.getAttribute("href").substr(1);
+            if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView({
+                    behavior: "smooth"
+                });
+            } else {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView();
+            }
+            if (id === "top") {
+                history.replaceState(null, null, " ");
+            } else {
+                history.pushState(null, null, `#${id}`);
+            }
+        });
+    });
+
+</script>
+<script>
+    var mybutton = document.getElementById("top-link");
+    window.onscroll = function () {
+        if (document.body.scrollTop > 800 || document.documentElement.scrollTop > 800) {
+            mybutton.style.visibility = "visible";
+            mybutton.style.opacity = "1";
+        } else {
+            mybutton.style.visibility = "hidden";
+            mybutton.style.opacity = "0";
+        }
+    };
+
+</script>
+<script>
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+        const html = document.querySelector("html");
+        if (html.dataset.theme === "dark") {
+            html.dataset.theme = 'light';
+            localStorage.setItem("pref-theme", 'light');
+        } else {
+            html.dataset.theme = 'dark';
+            localStorage.setItem("pref-theme", 'dark');
+        }
+    })
+
+</script>
+<script>
+    document.querySelectorAll('pre > code').forEach((codeblock) => {
+        const container = codeblock.parentNode.parentNode;
+
+        const copybutton = document.createElement('button');
+        copybutton.classList.add('copy-code');
+        copybutton.innerHTML = 'copy';
+
+        function copyingDone() {
+            copybutton.innerHTML = 'copied!';
+            setTimeout(() => {
+                copybutton.innerHTML = 'copy';
+            }, 2000);
+        }
+
+        copybutton.addEventListener('click', (cb) => {
+            if ('clipboard' in navigator) {
+                navigator.clipboard.writeText(codeblock.textContent);
+                copyingDone();
+                return;
+            }
+
+            const range = document.createRange();
+            range.selectNodeContents(codeblock);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            try {
+                document.execCommand('copy');
+                copyingDone();
+            } catch (e) { };
+            selection.removeRange(range);
+        });
+
+        if (container.classList.contains("highlight")) {
+            container.appendChild(copybutton);
+        } else if (container.parentNode.firstChild == container) {
+            
+        } else if (codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName == "TABLE") {
+            
+            codeblock.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(copybutton);
+        } else {
+            
+            codeblock.parentNode.appendChild(copybutton);
+        }
+    });
+</script>
+</body>
+
+</html>
